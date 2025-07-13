@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+.mypy_cache/
+
+# 환경 설정 및 민감한 정보
+*.env
+tourapi-77ca1-firebase-adminsdk-fbsvc-3caf24d515.json
+github_token.txt
+
+# 데이터베이스
+*.db
+tour_ranking*.db
+
+# 임시 파일
+temp_images/
+*.log
+
+# 큰 데이터 파일들
+database_images/
+database_images_seoul_all/
+seoul_images/
+fine_tuned_model/
+fine_tuned_results/
+similarity_results/
+saved_models/
+
+# 문서 파일
+*.pdf
+*.docx
+
+# 기타
+.DS_Store
+.vscode/ 

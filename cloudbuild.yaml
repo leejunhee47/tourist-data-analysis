@@ -1,0 +1,67 @@
+steps:
+# Pre-step 1: 모델 파일을 저장할 디렉토리를 소스 코드 내에 생성
+- name: 'ubuntu'
+  args: ['mkdir', '-p', 'tourist-data-analysis-main/fine_tuned_model']
+
+# Pre-step 2: Cloud Build 서비스 계정 권한으로 GCS에서 모델 파일 다운로드
+- name: 'gcr.io/cloud-builders/gsutil'
+  args: ['cp', 'gs://tourapi-77ca1-models/new_best_model.pth', 'tourist-data-analysis-main/fine_tuned_model/']
+
+# 1. Docker 이미지 빌드
+# -t 플래그: 이미지에 이름과 태그를 지정합니다. 
+#   - gcr.io/$PROJECT_ID/tourist-app:$BUILD_ID: 저장소 이름과 이미지 이름
+#   - $BUILD_ID: 빌드 ID (Cloud Build가 자동으로 대체)
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/tourist-app:$BUILD_ID', '.']
+  timeout: 1800s  # 30분 타임아웃 (Flutter 빌드 시간 고려)
+
+# 2. Docker 이미지를 Container Registry에 푸시
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/tourist-app:$BUILD_ID']
+
+# 3. Cloud Run에 배포
+# --image: 배포할 Docker 이미지 주소
+# --region: 서비스가 배포될 지역
+# --platform: 실행 환경 (managed는 서버리스를 의미)
+# --allow-unauthenticated: 인증되지 않은 요청 허용 (웹 앱이므로)
+# --port: 컨테이너가 리스닝하는 포트
+# --memory: 서비스에 할당할 메모리 (AI 모델 로드를 위해 2Gi로 설정)
+# --cpu: 할당할 CPU 수 (2개로 설정하여 성능 확보)
+# --timeout: 요청 처리 최대 시간 (AI 추론 시간을 고려하여 300초로 설정)
+# --max-instances: 최대 인스턴스 수 (10개로 설정하여 다중 인스턴스 지원)
+# --min-instances: 최소 인스턴스 수 (0개로 설정하여 자동 확장 비활성화)
+- name: 'gcr.io/cloud-builders/gcloud'
+  args:
+    - 'run'
+    - 'deploy'
+    - 'tourist-app'
+    - '--image'
+    - 'gcr.io/$PROJECT_ID/tourist-app:$BUILD_ID'
+    - '--region'
+    - 'asia-northeast3'  # 서울 리전
+    - '--platform'
+    - 'managed'
+    - '--allow-unauthenticated'
+    - '--memory'
+    - '2Gi'
+    - '--cpu'
+    - '2'
+    - '--timeout'
+    - '300'
+    - '--max-instances'
+    - '5'
+    - '--min-instances'
+    - '0'
+
+# 배포 후 Artifact Registry에 저장될 이미지 정보
+images:
+- 'gcr.io/$PROJECT_ID/tourist-app:$BUILD_ID' 
+
+# 빌드 옵션
+options:
+  machineType: 'E2_HIGHCPU_8'  # 고성능 빌드 머신 (Flutter 빌드용)
+  diskSizeGb: '100'
+  logging: CLOUD_LOGGING_ONLY
+
+# 빌드 타임아웃
+timeout: 2400s  # 40분 

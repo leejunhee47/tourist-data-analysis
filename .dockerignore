@@ -1,0 +1,71 @@
+# Docker 관련 파일 제외
+Dockerfile
+.dockerignore
+cloudbuild.yaml
+
+# Git 관련 폴더 제외
+.git
+.gitignore
+*.md
+README.md
+
+# Python 가상 환경 및 캐시 제외
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# Flutter 관련 빌드 파일 및 임시 파일 제외
+
+tourist-data-analysis-main/flutter/
+**/build/
+**/.dart_tool/
+**/.idea/
+**/.metadata
+**/.packages
+
+# IDE 및 OS 관련 파일 제외
+.idea/
+.vscode/
+*.iml
+*.log
+Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# 임시 파일
+temp_images/
+query_images_backup/
+query_images/
+map_images/
+*.tmp
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+
+# 테스트 파일
+test/
+*_test.py
+*_test.dart 
