@@ -79,6 +79,7 @@ flutter:
     # - assets/seoul_districts_2017.geojson
     # - assets/korea_provinces_2017.geojson
     # - assets/korea_provinces_2017_topo.json
+    - assets/kakaomapTest.html
 
   # To add assets to your application, add an assets section, like this:
   # assets:
