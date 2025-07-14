@@ -360,44 +360,69 @@
       let allOverlays = [];
 
       // ▼▼▼ 추가된 함수 ▼▼▼
-      // 모든 마커의 테두리를 초기화하는 함수
+      // 이전에 하이라이트된 마커의 ID와 타이머를 저장할 변수
+      let highlightedContentId = null;
+      let highlightTimeout = null;
+
+      // 모든 마커의 테두리를 초기화하는 함수 (더 이상 highlightMarker에서 사용하지 않음)
       function resetAllMarkerBorders() {
         const overlays = document.getElementsByClassName("photo-overlay");
         for (let i = 0; i < overlays.length; i++) {
-          overlays[i].style.borderColor = "#fff"; // 원래 흰색 테두리로
-          overlays[i].style.borderWidth = "3px"; // 원래 두께로
+          overlays[i].style.borderColor = "#fff";
+          overlays[i].style.borderWidth = "3px";
+        }
+        highlightedContentId = null;
+        if (highlightTimeout) {
+          clearTimeout(highlightTimeout);
+          highlightTimeout = null;
         }
       }
 
-      // 특정 마커를 하이라이트하는 함수
+      // [수정됨] 특정 마커를 하이라이트하는 함수 (성능 개선 버전)
       function highlightMarker(contentId) {
-        // 1. 모든 마커의 하이라이트를 초기화합니다.
-        resetAllMarkerBorders();
+        // 1. 기존에 설정된 하이라이트 자동 제거 타이머가 있다면 즉시 취소
+        if (highlightTimeout) {
+          clearTimeout(highlightTimeout);
+        }
 
-        // 2. ID를 이용해 타겟 오버레이를 찾습니다.
+        // 2. 이전에 하이라이트된 마커가 있다면 즉시 원래 상태로 복원
+        if (highlightedContentId && highlightedContentId !== contentId) {
+          const prevOverlay = document.getElementById(
+            `photo-overlay-${highlightedContentId}`
+          );
+          if (prevOverlay) {
+            prevOverlay.style.borderColor = "#fff";
+            prevOverlay.style.borderWidth = "3px";
+          }
+        }
+
+        // 3. 새로운 마커를 찾아 하이라이트
         const targetOverlay = document.getElementById(
           `photo-overlay-${contentId}`
         );
-
-        // 3. 찾은 오버레이의 테두리 스타일을 변경합니다.
         if (targetOverlay) {
           targetOverlay.style.borderColor = "#ff4444"; // 빨간색
           targetOverlay.style.borderWidth = "4px"; // 약간 더 두껍게
           console.log(`마커 하이라이트: ${contentId}`);
 
-          // ▼▼▼ 여기에 setTimeout 로직 추가 ▼▼▼
-          // 2.5초 후에 하이라이트를 자동으로 제거합니다.
-          setTimeout(() => {
+          // 4. 현재 하이라이트된 마커 ID를 저장
+          highlightedContentId = contentId;
+
+          // 5. 3초 후에 하이라이트를 자동으로 제거하는 타이머 설정
+          highlightTimeout = setTimeout(() => {
             targetOverlay.style.borderColor = "#fff"; // 원래 흰색 테두리로
             targetOverlay.style.borderWidth = "3px"; // 원래 두께로
             console.log(`마커 하이라이트 자동 제거: ${contentId}`);
+
+            // 타이머가 실행되었으므로 ID와 타이머 참조를 초기화
+            highlightedContentId = null;
+            highlightTimeout = null;
           }, 3000);
-          // ▲▲▲ 추가 완료 ▲▲▲
         } else {
           console.error(`하이라이트할 마커를 찾지 못했습니다: ${contentId}`);
         }
       }
-      // ▲▲▲ 추가된 함수 ▲▲▲
+      // ▲▲▲ 수정/추가 영역 끝 ▲▲▲
 
       // ▼▼▼ 2. 서울시 영역을 표시하는 폴리곤 생성 함수 추가 ▼▼▼
       function displaySeoulArea(map, coordinates) {

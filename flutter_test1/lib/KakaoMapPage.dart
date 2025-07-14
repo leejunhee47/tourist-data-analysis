@@ -930,127 +930,132 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                 ),
               ],
             ),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    Image.network(
-                      photo.galWebImageUrl,
-                      fit: BoxFit.contain,
-                      errorBuilder: (c, e, s) => Container(
-                        height: 200,
-                        color: Colors.grey[300],
-                        child: const Center(
-                          child: Icon(
-                            Icons.broken_image,
-                            size: 80,
-                            color: Colors.grey,
-                          ),
+            SingleChildScrollView(
+              child: Column(
+                children: [
+                  Image.network(
+                    photo.galWebImageUrl,
+                    fit: BoxFit.contain,
+                    errorBuilder: (c, e, s) => Container(
+                      height: 200,
+                      color: Colors.grey[300],
+                      child: const Center(
+                        child: Icon(
+                          Icons.broken_image,
+                          size: 80,
+                          color: Colors.grey,
                         ),
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Title: ${photo.galTitle}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Title: ${photo.galTitle}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
                           ),
-                          const SizedBox(height: 8),
-                          Text('위치: ${photo.galPhotographyLocation}'),
-                          const SizedBox(height: 16),
-                          if (matchedPlace.isNotEmpty)
-                            Center(
-                              child: ElevatedButton.icon(
-                                icon: Icon(
-                                  isVisited
-                                      ? Icons.check_circle
-                                      : Icons.flag_outlined,
-                                ),
-                                label: Text(
-                                  isVisited ? '인증 완료' : '이 장소로 미션 시작',
-                                ),
-                                // [수정] onPressed 로직 변경
-                                onPressed: isVisited
-                                    ? () {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text('이미 방문한 관광지입니다.'),
-                                          ),
-                                        );
-                                      }
-                                    : () async {
-                                        // 기존 타이머가 있다면 취소
-                                        _missionBannerTimer?.cancel();
+                        ),
+                        const SizedBox(height: 8),
+                        Text('위치: ${photo.galPhotographyLocation}'),
+                        const SizedBox(height: 16),
+                        if (matchedPlace.isNotEmpty)
+                          Center(
+                            child: ElevatedButton.icon(
+                              icon: Icon(
+                                isVisited
+                                    ? Icons.check_circle
+                                    : Icons.flag_outlined,
+                              ),
+                              label: Text(
+                                isVisited ? '인증 완료' : '이 장소로 미션 시작',
+                              ),
+                              onPressed: isVisited
+                                  ? () {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text('이미 방문한 관광지입니다.'),
+                                        ),
+                                      );
+                                    }
+                                  : () {
+                                      // 1. 먼저 다이얼로그를 닫습니다
+                                      Navigator.of(context).pop();
 
-                                        setState(() {
-                                          _currentTargetPlace = matchedPlace;
-                                          _showMissionBanner = true; // 배너 표시
-                                        });
-
-                                        // 2초 후에 배너를 숨기는 타이머 설정
-                                        _missionBannerTimer = Timer(
-                                          const Duration(seconds: 3),
+                                      // 2. 잠깐 기다린 후 상태를 업데이트합니다
+                                      Future.delayed(
+                                          const Duration(milliseconds: 100),
                                           () {
-                                            if (mounted) {
-                                              setState(() {
-                                                _showMissionBanner =
-                                                    false; // 배너 숨김
-                                              });
-                                            }
-                                          },
-                                        );
+                                        if (mounted) {
+                                          // 기존 타이머 취소
+                                          _missionBannerTimer?.cancel();
 
-                                        try {
-                                          await _controller.runJavaScript(
-                                            "highlightMarker('${photo.galContentId}')",
+                                          // 상태 업데이트
+                                          setState(() {
+                                            _currentTargetPlace = matchedPlace;
+                                            _showMissionBanner = true;
+                                          });
+
+                                          // 배너 숨기기 타이머 설정
+                                          _missionBannerTimer = Timer(
+                                            const Duration(seconds: 3),
+                                            () {
+                                              if (mounted) {
+                                                setState(() {
+                                                  _showMissionBanner = false;
+                                                });
+                                              }
+                                            },
                                           );
-                                        } catch (e) {
-                                          print("JS highlightMarker 호출 오류: $e");
-                                        }
 
-                                        Navigator.of(context).pop();
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              '\'$matchedPlace\' 장소가 선택되었습니다!',
+                                          // 3. JavaScript 함수 호출 (에러 처리 포함)
+                                          _controller
+                                              .runJavaScript(
+                                            "highlightMarker('${photo.galContentId}')",
+                                          )
+                                              .catchError((e) {
+                                            print(
+                                                "JS highlightMarker 호출 오류: $e");
+                                          });
+
+                                          // 4. 스낵바 표시
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                '\'$matchedPlace\' 장소가 선택되었습니다!',
+                                              ),
+                                              duration:
+                                                  const Duration(seconds: 2),
                                             ),
-                                            duration: const Duration(
-                                              seconds: 2,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: isVisited
-                                      ? Colors.grey
-                                      : Colors.blue[400],
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                    vertical: 12,
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 16),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
+                                          );
+                                        }
+                                      });
+                                    },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor:
+                                    isVisited ? Colors.grey : Colors.blue[400],
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 12,
+                                ),
+                                textStyle: const TextStyle(fontSize: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
                                 ),
                               ),
                             ),
-                        ],
-                      ),
+                          ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1186,13 +1191,13 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           // Target Mission Info
           // [수정] _showMissionBanner 조건 추가
           if (_showMissionBanner && _currentTargetPlace != null)
-            AnimatedOpacity(
-              opacity: _isMenuOpen ? 0.0 : 1.0, // Hide when menu is open
-              duration: _menuAnimationDuration,
-              child: Positioned(
-                bottom: 30,
-                left: 0,
-                right: 0,
+            Positioned(
+              bottom: 30,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                opacity: _isMenuOpen ? 0.0 : 1.0, // Hide when menu is open
+                duration: _menuAnimationDuration,
                 child: Center(
                   child: Container(
                     padding: const EdgeInsets.symmetric(
