@@ -363,16 +363,20 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             debugInfo = 'JS 메시지: ${message.message}';
           });
           try {
-            final data = jsonDecode(message.message);
-            if (data['type'] == 'markerClick') {
-              final String contentId = data['contentId'].toString();
-              final photo = widget.photos?.firstWhere(
-                (p) => p.galContentId == contentId,
-                // orElse: () => null, // PhotoItem.empty()는 적합하지 않으므로 주석 처리
-              );
-              if (photo != null) {
-                _showPhotoDetail(photo);
+            if (message.message.trim().startsWith('{')) {
+              final data = jsonDecode(message.message);
+              if (data['type'] == 'markerClick') {
+                final String contentId = data['contentId'].toString();
+                final photo = widget.photos?.firstWhere(
+                  (p) => p.galContentId == contentId,
+                  // orElse: () => null, // PhotoItem.empty()는 적합하지 않으므로 주석 처리
+                );
+                if (photo != null) {
+                  _showPhotoDetail(photo);
+                }
               }
+            }else{
+              print('일반 메시지: ${message.message}');
             }
           } catch (e) {
             print("JavaScript 메시지 파싱 오류: $e");

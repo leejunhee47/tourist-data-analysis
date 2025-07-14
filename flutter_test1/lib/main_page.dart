@@ -80,7 +80,11 @@ class _MainPageState extends State<MainPage> {
   Future<void> _fetchPlaceCoordinates() async {
     try {
       final url = Uri.parse('$serverUrl/places/');
+      print('🔍 관광지 좌표 요청 URL: $url');
+
       final response = await http.get(url);
+      print('📡 서버 응답 상태 코드: ${response.statusCode}');
+      print('📄 응답 본문: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
@@ -102,9 +106,13 @@ class _MainPageState extends State<MainPage> {
         }
       } else {
         print('🚨 관광지 좌표 로딩 실패: ${response.statusCode}');
+        print('🚨 응답 내용: ${response.body}');
+
       }
     } catch (e) {
       print('🚨 관광지 좌표 로딩 오류: $e');
+      print('🚨 오류 타입: ${e.runtimeType}');
+
     }
   }
 

@@ -16,18 +16,30 @@ from fastapi.staticfiles import StaticFiles
 # --- 모델 인스턴스를 저장할 변수 ---
 inferencer = None
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 앱 시작 시 실행될 코드
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     # 앱 시작 시 실행될 코드
+#     global inferencer
+#     print("서버 시작: CLIP-LoRA 모델을 로드합니다...")
+#     inferencer = CLIPLoRAInference()
+#     print("모델 로딩 완료.")
+#     yield
+#     # 앱 종료 시 실행될 코드 (필요 시)
+#     print("서버 종료.")
+
+# app = FastAPI(lifespan=lifespan)
+# FastAPI 앱 생성 (lifespan 인자 제거)
+app = FastAPI()
+
+# 여기에 startup 이벤트 핸들러 추가
+@app.on_event("startup")
+async def load_model():
     global inferencer
-    print("서버 시작: CLIP-LoRA 모델을 로드합니다...")
+    print("서버 시작: CLIP-LoRA 모델 로드 중…")
     inferencer = CLIPLoRAInference()
     print("모델 로딩 완료.")
-    yield
-    # 앱 종료 시 실행될 코드 (필요 시)
-    print("서버 종료.")
-
-app = FastAPI(lifespan=lifespan)
+    
+    
 
 # 정적 파일 마운트
 app.mount("/map_images", StaticFiles(directory="map_images"), name="map_images")

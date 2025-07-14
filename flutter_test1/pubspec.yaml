@@ -72,12 +72,13 @@ flutter:
   # the material Icons class.
   uses-material-design: true
   assets:
-    - assets/kakaomapTest.HTML
-    - assets/kakao_login_large_wide.png
-    # 지도 경계 데이터 (파일명을 영어로 변경하여 빌드 호환성 개선)
-    - assets/seoul_districts_2017.geojson
-    - assets/korea_provinces_2017.geojson
-    - assets/korea_provinces_2017_topo.json
+    - assets/
+    # - assets/kakaomapTest.html
+    # - assets/kakao_login_large_wide.png
+    # # 지도 경계 데이터 (파일명을 영어로 변경하여 빌드 호환성 개선)
+    # - assets/seoul_districts_2017.geojson
+    # - assets/korea_provinces_2017.geojson
+    # - assets/korea_provinces_2017_topo.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:
