@@ -39,7 +39,7 @@ async def load_model():
     inferencer = CLIPLoRAInference()
     print("모델 로딩 완료.")
     
-MAX_DISTANCE_M = 100
+    
 
 # 정적 파일 마운트
 app.mount("/map_images", StaticFiles(directory="map_images"), name="map_images")
@@ -166,29 +166,6 @@ async def predict_location(
     latitude: float = Form(...),
     longitude: float = Form(...)
 ):
-    
-    # 1) 타깃 관광지 좌표 확인
-    if target_place not in inferencer.place_coords:
-        raise HTTPException(status_code=400, detail="알 수 없는 타깃 관광지입니다.")
-    target_lat, target_lon = inferencer.place_coords[target_place]
-
-    # 2) 거리 계산 (CLIPLoRAInference.calculate_distance는 km 단위 반환)
-    distance_km = inferencer.calculate_distance(latitude, longitude, target_lat, target_lon)
-    distance_m = distance_km * 1000  # m 단위로 변환
-    
-    # 3) 반경 100m 초과 시 즉시 인증 실패
-    if distance_m > MAX_DISTANCE_M:
-        return PredictionResponse(
-            predictions=[],
-            score_earned=0,
-            is_correct=False,
-            message=(
-                f"인증 실패: 사용자의 위치가 관광지로부터 "
-                f"{int(distance_m)}m 떨어져 있습니다. (최대 허용 거리: {MAX_DISTANCE_M}m)"
-            )
-        )
-        
-    # 4) 거리 체크 통과 시에만 이미지 저장 및 예측 로직 실행
     try:
         # 파일명이 None인 경우 처리
         filename = image.filename if image.filename else f"temp_{uuid.uuid4()}.jpg"
