@@ -33,10 +33,13 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   bool isLocationLoading = false;
   final ImagePicker _picker = ImagePicker();
   String? _currentTargetPlace;
-  bool _isSubmitting = false;
+  final bool _isSubmitting = false;
   User? _currentUser;
   Timer? _missionBannerTimer; // [수정] 배너 표시 타이머 변수 추가
   bool _showMissionBanner = false; // [수정] 배너 표시 상태 변수 추가
+
+  // +++ 추가된 상태 변수 +++
+  String? _selectedTestPlace;
 
   // --- Data State (from MainPage) ---
   bool _isLoading = true;
@@ -70,6 +73,9 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   @override
   void initState() {
     super.initState();
+    // +++ 추가된 초기화 코드 +++
+    _selectedTestPlace = targetKeywords.isNotEmpty ? targetKeywords[0] : null;
+
     _currentUser = widget.user;
     _initializeWebView();
     _initializeGameData();
@@ -83,6 +89,69 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     _missionBannerTimer?.cancel(); // [수정] 위젯 종료 시 타이머 취소
     super.dispose();
   }
+
+  // +++ START OF NEW METHOD +++
+  /// 테스트용으로 현재 위치를 '경복궁'의 좌표로 설정합니다.
+  /// 테스트용으로 현재 위치를 선택된 관광지의 좌표로 설정합니다.
+  Future<void> _setTestLocationTo(String? placeName) async {
+    if (placeName == null) return;
+
+    // 1. 선택된 장소의 좌표 찾기
+    if (_placeCoords.containsKey(placeName)) {
+      final coords = _placeCoords[placeName]!;
+      final testLatitude = coords['lat']!;
+      final testLongitude = coords['lng']!;
+
+      // 2. 새로운 Position 객체 생성
+      final testPosition = Position(
+        latitude: testLatitude,
+        longitude: testLongitude,
+        timestamp: DateTime.now(),
+        accuracy: 0.0,
+        altitude: 0.0,
+        altitudeAccuracy: 0.0,
+        heading: 0.0,
+        headingAccuracy: 0.0,
+        speed: 0.0,
+        speedAccuracy: 0.0,
+      );
+
+      // 3. 상태 업데이트 및 지도에 반영
+      if (mounted) {
+        setState(() {
+          currentPosition = testPosition;
+        });
+
+        // 4. 지도에 현재 위치 마커 추가하고 중심으로 이동
+        if (isMapLoaded) {
+          String jsCode =
+              'addCurrentLocationMarker(${testPosition.latitude}, ${testPosition.longitude}, true);'; // true to pan
+          try {
+            await _controller.runJavaScript(jsCode);
+          } catch (e) {
+            print("JS 테스트 위치 설정 오류: $e");
+          }
+        }
+
+        // 5. 사용자에게 피드백 제공
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('테스트: 현재 위치를 \'$placeName\'(으)로 설정했습니다.'),
+            backgroundColor: Colors.orangeAccent,
+          ),
+        );
+      }
+    } else {
+      // 좌표 정보를 찾지 못한 경우
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('\'$placeName\'의 좌표를 찾을 수 없습니다. 장소 데이터 확인이 필요합니다.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+  // +++ END OF NEW METHOD +++
 
   // ▼▼▼ All other methods remain the same ▼▼▼
   // _refreshKakaoUser, _initializeGameData, _getOrCreateUser,
@@ -728,7 +797,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       );
       return;
     }
-    setState(() => _isSubmitting = true);
+    //setState(() => _isSubmitting = true);
     try {
       var request =
           http.MultipartRequest('POST', Uri.parse('$serverUrl/predict/'))
@@ -790,7 +859,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           ),
         );
     } finally {
-      if (mounted) setState(() => _isSubmitting = false);
+      //if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -854,15 +923,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   }
 
   Future<void> _pickImage() async {
-    if (_currentTargetPlace == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('미션 관광지를 지도에서 선택해주세요!'),
-          duration: Duration(milliseconds: 1500),
-        ),
-      );
-      return;
-    }
+    // _currentTargetPlace null 체크 제거 (이미 설정된 상태에서만 호출되므로)
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
@@ -979,8 +1040,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                       ScaffoldMessenger.of(context)
                                           .showSnackBar(
                                         const SnackBar(
-                                          content: Text('이미 방문한 관광지입니다.'),
-                                        ),
+                                            content: Text('이미 방문한 관광지입니다.')),
                                       );
                                     }
                                   : () {
@@ -1023,17 +1083,8 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                                 "JS highlightMarker 호출 오류: $e");
                                           });
 
-                                          // 4. 스낵바 표시
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            SnackBar(
-                                              content: Text(
-                                                '\'$matchedPlace\' 장소가 선택되었습니다!',
-                                              ),
-                                              duration:
-                                                  const Duration(seconds: 2),
-                                            ),
-                                          );
+                                          // 4. 바로 사진 선택 모달 표시
+                                          _pickImage();
                                         }
                                       });
                                     },
@@ -1082,111 +1133,136 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             ),
 
           // Profile and Score (Top Left)
+          // ### MODIFIED SECTION START ###
+          // Profile, Score, and Test Button (Top Left)
+          // Profile, Score, and Test Button (Top Left)
           Positioned(
             top: 16,
             left: 16,
             child: SafeArea(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 6,
-                      offset: const Offset(0, 3),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // --- 사라졌던 프로필 및 점수 위젯 ---
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
                     ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // CircleAvatar(
-                    //   radius: 20,
-                    //   backgroundImage:
-                    //       _currentUser
-                    //               ?.kakaoAccount
-                    //               ?.profile
-                    //               ?.thumbnailImageUrl !=
-                    //           null
-                    //       ? NetworkImage(
-                    //           _currentUser!
-                    //               .kakaoAccount!
-                    //               .profile!
-                    //               .thumbnailImageUrl!,
-                    //         )
-                    //       : null,
-                    //   child:
-                    //       _currentUser
-                    //               ?.kakaoAccount
-                    //               ?.profile
-                    //               ?.thumbnailImageUrl ==
-                    //           null
-                    //       ? const Icon(Icons.person, size: 22)
-                    //       : null,
-                    // ),
-                    // --- MODIFIED WIDGET START ---
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8.0), // 모서리를 둥글게 처리
-                      child: Container(
-                        width: 48, // 너비 증가
-                        height: 48, // 높이 증가
-                        color: Colors.grey[200], // 프로필 이미지가 없을 때의 배경색
-                        child: _currentUser?.kakaoAccount?.profile
-                                    ?.thumbnailImageUrl !=
-                                null
-                            ? Image.network(
-                                _currentUser!
-                                    .kakaoAccount!.profile!.thumbnailImageUrl!,
-                                fit: BoxFit.cover, // 이미지가 컨테이너를 꽉 채우도록 설정
-                                width: 48,
-                                height: 48,
-                              )
-                            : const Icon(
-                                // 이미지가 없을 때 보여줄 아이콘
-                                Icons.person,
-                                size: 32, // 아이콘 크기 증가
-                                color: Colors.grey,
-                              ),
-                      ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 6,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      widget.isGuest
-                          ? 'Guest'
-                          : _currentUser?.kakaoAccount?.profile?.nickname ??
-                              'User',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Icon(Icons.emoji_events, color: Colors.amber),
-                    const SizedBox(width: 4),
-                    _isProfileLoading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Text(
-                            '$_totalScore점',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: Colors.blue,
-                            ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8.0),
+                          child: Container(
+                            width: 48,
+                            height: 48,
+                            color: Colors.grey[200],
+                            child: _currentUser?.kakaoAccount?.profile
+                                        ?.thumbnailImageUrl !=
+                                    null
+                                ? Image.network(
+                                    _currentUser!.kakaoAccount!.profile!
+                                        .thumbnailImageUrl!,
+                                    fit: BoxFit.cover,
+                                    width: 48,
+                                    height: 48,
+                                  )
+                                : const Icon(
+                                    Icons.person,
+                                    size: 32,
+                                    color: Colors.grey,
+                                  ),
                           ),
-                  ],
-                ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          widget.isGuest
+                              ? 'Guest'
+                              : _currentUser?.kakaoAccount?.profile?.nickname ??
+                                  'User',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Icon(Icons.emoji_events, color: Colors.amber),
+                        const SizedBox(width: 4),
+                        _isProfileLoading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Text(
+                                '$_totalScore점',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // --- 테스트 위치 설정 드롭다운 메뉴 ---
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12.0, vertical: 4.0),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 4,
+                        ),
+                      ],
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedTestPlace,
+                        hint: const Text("테스트 위치 선택"),
+                        isDense: true,
+                        onChanged: (String? newValue) {
+                          if (newValue != null) {
+                            setState(() {
+                              _selectedTestPlace = newValue;
+                            });
+                            _setTestLocationTo(newValue);
+                          }
+                        },
+                        items: targetKeywords
+                            .map<DropdownMenuItem<String>>((String value) {
+                          return DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value,
+                                style: const TextStyle(fontSize: 13)),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
+          // ### MODIFIED SECTION END ###
 
           // Target Mission Info
           // [수정] _showMissionBanner 조건 추가
@@ -1236,19 +1312,19 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     // A list of FABs to be displayed.
     final List<Widget> menuButtons = [
       _buildMenuOption(
-        distance: 250.0,
+        distance: 190.0,
         tooltip: '컬렉션 북',
         onPressed: _showCollectionBookDialog,
         child: const Icon(Icons.book_outlined),
       ),
       _buildMenuOption(
-        distance: 190.0,
+        distance: 130.0,
         tooltip: '랭킹',
         onPressed: _showRankingDialog,
         child: const Icon(Icons.leaderboard_outlined),
       ),
       _buildMenuOption(
-        distance: 130.0,
+        distance: 70.0,
         tooltip: '현재 위치',
         onPressed: _recenterMapToCurrentLocation,
         child: isLocationLoading
@@ -1262,24 +1338,24 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               )
             : const Icon(Icons.my_location),
       ),
-      _buildMenuOption(
-        distance: 70.0, // Distance from main FAB
-        tooltip: '인증샷 촬영',
-        onPressed: _pickImage,
-        backgroundColor:
-            _currentTargetPlace != null ? Colors.green : Colors.grey,
-        foregroundColor: Colors.white,
-        child: _isSubmitting
-            ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 3,
-                ),
-              )
-            : const Icon(Icons.camera_alt),
-      ),
+      // _buildMenuOption(
+      //   distance: 70.0, // Distance from main FAB
+      //   tooltip: '인증샷 촬영',
+      //   onPressed: _pickImage,
+      //   backgroundColor:
+      //       _currentTargetPlace != null ? Colors.green : Colors.grey,
+      //   foregroundColor: Colors.white,
+      //   child: _isSubmitting
+      //       ? const SizedBox(
+      //           width: 24,
+      //           height: 24,
+      //           child: CircularProgressIndicator(
+      //             color: Colors.white,
+      //             strokeWidth: 3,
+      //           ),
+      //         )
+      //       : const Icon(Icons.camera_alt),
+      // ),
     ];
     return Positioned(
       bottom: 16,
