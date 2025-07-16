@@ -962,6 +962,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           visit['target_place'] == matchedPlace &&
           (visit['is_correct'] == true || visit['is_correct'] == 1),
     );
+
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -1033,64 +1034,44 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                     : Icons.flag_outlined,
                               ),
                               label: Text(
-                                isVisited ? '인증 완료' : '이 장소로 미션 시작',
+                                isVisited ? '다시 인증하기' : '이 장소로 미션 시작',
                               ),
-                              onPressed: isVisited
-                                  ? () {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                            content: Text('이미 방문한 관광지입니다.')),
-                                      );
-                                    }
-                                  : () {
-                                      // 1. 먼저 다이얼로그를 닫습니다
-                                      Navigator.of(context).pop();
-
-                                      // 2. 잠깐 기다린 후 상태를 업데이트합니다
-                                      Future.delayed(
-                                          const Duration(milliseconds: 100),
-                                          () {
+                              onPressed: () {
+                                // 1. 다이얼로그 닫기
+                                Navigator.of(context).pop();
+                                // 2. 잠시 후 미션 시작 로직 실행
+                                Future.delayed(
+                                    const Duration(milliseconds: 100), () {
+                                  if (mounted) {
+                                    _missionBannerTimer?.cancel();
+                                    setState(() {
+                                      _currentTargetPlace = matchedPlace;
+                                      _showMissionBanner = true;
+                                    });
+                                    _missionBannerTimer = Timer(
+                                      const Duration(seconds: 3),
+                                      () {
                                         if (mounted) {
-                                          // 기존 타이머 취소
-                                          _missionBannerTimer?.cancel();
-
-                                          // 상태 업데이트
                                           setState(() {
-                                            _currentTargetPlace = matchedPlace;
-                                            _showMissionBanner = true;
+                                            _showMissionBanner = false;
                                           });
-
-                                          // 배너 숨기기 타이머 설정
-                                          _missionBannerTimer = Timer(
-                                            const Duration(seconds: 3),
-                                            () {
-                                              if (mounted) {
-                                                setState(() {
-                                                  _showMissionBanner = false;
-                                                });
-                                              }
-                                            },
-                                          );
-
-                                          // 3. JavaScript 함수 호출 (에러 처리 포함)
-                                          _controller
-                                              .runJavaScript(
-                                            "highlightMarker('${photo.galContentId}')",
-                                          )
-                                              .catchError((e) {
-                                            print(
-                                                "JS highlightMarker 호출 오류: $e");
-                                          });
-
-                                          // 4. 바로 사진 선택 모달 표시
-                                          _pickImage();
                                         }
-                                      });
-                                    },
+                                      },
+                                    );
+                                    _controller
+                                        .runJavaScript(
+                                      "highlightMarker('${photo.galContentId}')",
+                                    )
+                                        .catchError((e) {
+                                      print("JS highlightMarker 호출 오류: $e");
+                                    });
+                                    // 3. 사진 선택 모달 표시
+                                    _pickImage();
+                                  }
+                                });
+                              },
                               style: ElevatedButton.styleFrom(
-                                backgroundColor:
-                                    isVisited ? Colors.grey : Colors.blue[400],
+                                backgroundColor: Colors.blue[400],
                                 foregroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 20,
