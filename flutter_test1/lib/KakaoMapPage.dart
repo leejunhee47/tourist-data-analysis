@@ -1,6 +1,6 @@
 // KakaoMapPage.dart
 
-import 'dart:async'; // [수정] Timer 사용을 위해 추가
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -20,7 +20,6 @@ class KakaoMapPage extends StatefulWidget {
   const KakaoMapPage.guest({super.key})
       : user = null,
         isGuest = true;
-
   @override
   State<KakaoMapPage> createState() => _KakaoMapPageState();
 }
@@ -35,12 +34,11 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   String? _currentTargetPlace;
   final bool _isSubmitting = false;
   User? _currentUser;
-  Timer? _missionBannerTimer; // [수정] 배너 표시 타이머 변수 추가
-  bool _showMissionBanner = false; // [수정] 배너 표시 상태 변수 추가
+  Timer? _missionBannerTimer;
+  bool _showMissionBanner = false;
 
   // +++ 추가된 상태 변수 +++
   String? _selectedTestPlace;
-
   // --- Data State (from MainPage) ---
   bool _isLoading = true;
   String? _sessionId;
@@ -73,7 +71,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   @override
   void initState() {
     super.initState();
-    // +++ 추가된 초기화 코드 +++
     _selectedTestPlace = targetKeywords.isNotEmpty ? targetKeywords[0] : null;
 
     _currentUser = widget.user;
@@ -86,23 +83,18 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     if (_sessionId != null) {
       _endGameSession();
     }
-    _missionBannerTimer?.cancel(); // [수정] 위젯 종료 시 타이머 취소
+    _missionBannerTimer?.cancel();
     super.dispose();
   }
 
-  // +++ START OF NEW METHOD +++
-  /// 테스트용으로 현재 위치를 '경복궁'의 좌표로 설정합니다.
   /// 테스트용으로 현재 위치를 선택된 관광지의 좌표로 설정합니다.
   Future<void> _setTestLocationTo(String? placeName) async {
     if (placeName == null) return;
-
-    // 1. 선택된 장소의 좌표 찾기
     if (_placeCoords.containsKey(placeName)) {
       final coords = _placeCoords[placeName]!;
       final testLatitude = coords['lat']!;
       final testLongitude = coords['lng']!;
 
-      // 2. 새로운 Position 객체 생성
       final testPosition = Position(
         latitude: testLatitude,
         longitude: testLongitude,
@@ -115,17 +107,13 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         speed: 0.0,
         speedAccuracy: 0.0,
       );
-
-      // 3. 상태 업데이트 및 지도에 반영
       if (mounted) {
         setState(() {
           currentPosition = testPosition;
         });
-
-        // 4. 지도에 현재 위치 마커 추가하고 중심으로 이동
         if (isMapLoaded) {
           String jsCode =
-              'addCurrentLocationMarker(${testPosition.latitude}, ${testPosition.longitude}, true);'; // true to pan
+              'addCurrentLocationMarker(${testPosition.latitude}, ${testPosition.longitude}, true);';
           try {
             await _controller.runJavaScript(jsCode);
           } catch (e) {
@@ -133,7 +121,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           }
         }
 
-        // 5. 사용자에게 피드백 제공
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('테스트: 현재 위치를 \'$placeName\'(으)로 설정했습니다.'),
@@ -142,7 +129,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         );
       }
     } else {
-      // 좌표 정보를 찾지 못한 경우
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('\'$placeName\'의 좌표를 찾을 수 없습니다. 장소 데이터 확인이 필요합니다.'),
@@ -151,30 +137,19 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       );
     }
   }
-  // +++ END OF NEW METHOD +++
 
-  // ▼▼▼ All other methods remain the same ▼▼▼
-  // _refreshKakaoUser, _initializeGameData, _getOrCreateUser,
-  // _fetchUserProfile, _fetchRankings, _fetchPlaceCoordinates,
-  // _fetchTouristSpotPhotos, _startGameSession, _endGameSession,
-  // _showRankingDialog, _showCollectionBookDialog, buildDot,
-  // _initializeWebView, _onMapReady, _displayTouristPhotos,
-  // _getCurrentLocation, _addCurrentLocationToMap, _adjustMapBounds,
-  // _submitPrediction, _getImage, _recenterMapToCurrentLocation,
-  // _pickImage, _showPhotoDetail
-  // (Your existing methods go here without any changes)
   Future<void> _refreshKakaoUser() async {
-    if (widget.isGuest) return; // 게스트는 새로고침 안함
+    if (widget.isGuest) return;
 
     try {
       User updatedUser = await UserApi.instance.me();
       if (mounted) {
         setState(() {
-          _currentUser = updatedUser; // 상태를 최신 유저 정보로 업데이트
+          _currentUser = updatedUser;
         });
       }
     } catch (error) {
-      print('카카오 유저 정보 새로고침 실패: $error'); // 에러 발생 시 기존 정보 유지
+      print('카카오 유저 정보 새로고침 실패: $error');
     }
   }
 
@@ -198,16 +173,28 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
+  // ### MODIFIED METHOD START ###
   Future<void> _getOrCreateUser() async {
     final String? username = widget.isGuest
         ? "게스트유저"
         : _currentUser?.kakaoAccount?.profile?.nickname;
+
+    // 카카오 프로필 썸네일 URL을 가져옵니다.
+    final String? profileImageUrl = widget.isGuest
+        ? ""
+        : _currentUser?.kakaoAccount?.profile?.thumbnailImageUrl;
+
     if (username == null) return;
+
     try {
       final response = await http.post(
         Uri.parse('$serverUrl/create_user/'),
         headers: {'Content-Type': 'application/json'},
-        body: json.encode({'username': username}),
+        // 요청 본문에 프로필 이미지 URL을 추가합니다.
+        body: json.encode({
+          'username': username,
+          'profile_image_url': profileImageUrl ?? '',
+        }),
       );
       if (response.statusCode == 200) {
         if (mounted)
@@ -221,6 +208,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       print('User creation/retrieval error: $e');
     }
   }
+  // ### MODIFIED METHOD END ###
 
   Future<void> _fetchUserProfile(String userId) async {
     try {
@@ -408,60 +396,144 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
+  // ### MODIFIED METHOD START ###
   void _showRankingDialog() {
     _fetchRankings().then((_) {
+      if (!mounted) return;
+
+      final topThree = _rankings.where((r) => r['rank'] <= 3).toList();
+      final rest = _rankings.where((r) => r['rank'] > 3).toList();
+
+      topThree.sort((a, b) => a['rank'].compareTo(b['rank']));
+
+      Map<String, dynamic>? first, second, third;
+      for (var data in topThree) {
+        if (data['rank'] == 1) first = data;
+        if (data['rank'] == 2) second = data;
+        if (data['rank'] == 3) third = data;
+      }
+
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.leaderboard, color: Colors.amber),
-              SizedBox(width: 8),
-              Text('명예의 전당'),
-            ],
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          titlePadding: const EdgeInsets.only(top: 24),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+          backgroundColor: Colors.grey[50],
+          title: const Text(
+            '명예의 전당',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           content: SizedBox(
             width: double.maxFinite,
-            child: _rankings.isEmpty
-                ? const Center(child: Text('아직 랭킹 정보가 없습니다.'))
-                : ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: _rankings.length,
-                    itemBuilder: (context, index) {
-                      final rankData = _rankings[index];
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        elevation: 2,
-                        child: ListTile(
-                          leading: Text(
-                            '${rankData['rank']}',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: rankData['rank'] == 1
-                                  ? Colors.amber.shade700
-                                  : rankData['rank'] == 2
-                                      ? Colors.grey.shade600
-                                      : rankData['rank'] == 3
-                                          ? Colors.brown.shade400
-                                          : Colors.black,
-                            ),
-                          ),
-                          title: Text(
-                            rankData['username'],
-                            style: const TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                          trailing: Text(
-                            '${rankData['total_score']}점',
-                            style: const TextStyle(
-                              color: Colors.blue,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
+            height: MediaQuery.of(context).size.height * 0.55,
+            child: Column(
+              children: [
+                if (topThree.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 24.0, horizontal: 16.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (second != null) _buildPodiumItem(second, context),
+                        if (first != null)
+                          _buildPodiumItem(first, context, isFirst: true),
+                        if (third != null) _buildPodiumItem(third, context),
+                      ],
+                    ),
                   ),
+                Expanded(
+                  child: _rankings.isEmpty
+                      ? const Center(child: Text('아직 랭킹 정보가 없습니다.'))
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: rest.length,
+                          itemBuilder: (context, index) {
+                            final rankData = rest[index];
+                            final username = rankData['username'];
+                            // 각 랭커의 프로필 이미지 URL을 가져옵니다.
+                            final String? userImageUrl =
+                                rankData['profile_image_url'];
+
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 4),
+                              child: Card(
+                                elevation: 0,
+                                color: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                                child: ListTile(
+                                  leading: Text(
+                                    '${rankData['rank']}',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.grey[700],
+                                    ),
+                                  ),
+                                  title: Row(
+                                    children: [
+                                      // 서버에서 받은 'profile_image_url'을 사용합니다.
+                                      CircleAvatar(
+                                        radius: 20,
+                                        backgroundColor: Colors.grey[200],
+                                        child: userImageUrl != null &&
+                                                userImageUrl.isNotEmpty
+                                            ? ClipOval(
+                                                child: Image.network(
+                                                  userImageUrl,
+                                                  fit: BoxFit.cover,
+                                                  width: 40,
+                                                  height: 40,
+                                                  // 로딩 및 에러 처리
+                                                  loadingBuilder: (context,
+                                                          child, progress) =>
+                                                      progress == null
+                                                          ? child
+                                                          : const Center(
+                                                              child:
+                                                                  CircularProgressIndicator(
+                                                                      strokeWidth:
+                                                                          2)),
+                                                  errorBuilder: (context, error,
+                                                          stackTrace) =>
+                                                      const Icon(Icons.person,
+                                                          color: Colors.grey),
+                                                ),
+                                              )
+                                            : const Icon(Icons.person,
+                                                color: Colors.grey),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Text(
+                                        username,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w500),
+                                      ),
+                                    ],
+                                  ),
+                                  trailing: Text(
+                                    '${rankData['total_score']}점',
+                                    style: const TextStyle(
+                                      color: Colors.blue,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -473,6 +545,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       );
     });
   }
+  // ### MODIFIED METHOD END ###
 
   void _showCollectionBookDialog() {
     showDialog(
@@ -521,7 +594,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                               itemBuilder: (context, index) {
                                 final photo = photos[index];
 
-                                // (수정 1) 방문 기록의 장소 이름이 사진 제목에 포함되는지 확인하는 정확한 로직으로 변경
                                 final isVisited = _visitHistory.any(
                                   (visit) =>
                                       (visit['is_correct'] == true ||
@@ -539,8 +611,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                         CrossAxisAlignment.stretch,
                                     children: [
                                       Expanded(
-                                        // (수정 2) 방문했다면(isVisited: true) 필터를 적용하지 않은 원본 컬러 이미지를,
-                                        // 방문하지 않았다면(isVisited: false) 흑백 필터를 적용하도록 구조 변경
                                         child: isVisited
                                             ? Image.network(
                                                 photo.galWebImageUrl,
@@ -797,7 +867,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       );
       return;
     }
-    //setState(() => _isSubmitting = true);
     try {
       var request =
           http.MultipartRequest('POST', Uri.parse('$serverUrl/predict/'))
@@ -811,17 +880,12 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       final response = await request.send();
       final responseData = json.decode(await response.stream.bytesToString());
       if (response.statusCode == 200) {
-        // ▼▼▼ 수정된 부분 시작 ▼▼▼
         final bool isCorrect = responseData['is_correct'];
-
         if (isCorrect) {
-          // 1. 인증에 성공한 관광지의 PhotoItem 찾기
           final photoItem = _touristSpotPhotos.firstWhere(
             (p) => p.galTitle.contains(targetPlace),
             orElse: () => PhotoItem.empty(),
           );
-
-          // 2. PhotoItem의 contentId를 이용해 JS 함수 호출
           if (photoItem.galContentId.isNotEmpty) {
             try {
               await _controller.runJavaScript(
@@ -832,7 +896,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             }
           }
         }
-        // ▲▲▲ 수정된 부분 끝 ▲▲▲
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -858,8 +921,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             backgroundColor: Colors.red,
           ),
         );
-    } finally {
-      //if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -923,7 +984,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   }
 
   Future<void> _pickImage() async {
-    // _currentTargetPlace null 체크 제거 (이미 설정된 상태에서만 호출되므로)
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
@@ -962,7 +1022,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           visit['target_place'] == matchedPlace &&
           (visit['is_correct'] == true || visit['is_correct'] == 1),
     );
-
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -1037,9 +1096,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                 isVisited ? '다시 인증하기' : '이 장소로 미션 시작',
                               ),
                               onPressed: () {
-                                // 1. 다이얼로그 닫기
                                 Navigator.of(context).pop();
-                                // 2. 잠시 후 미션 시작 로직 실행
                                 Future.delayed(
                                     const Duration(milliseconds: 100), () {
                                   if (mounted) {
@@ -1065,7 +1122,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                         .catchError((e) {
                                       print("JS highlightMarker 호출 오류: $e");
                                     });
-                                    // 3. 사진 선택 모달 표시
                                     _pickImage();
                                   }
                                 });
@@ -1096,27 +1152,17 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
-  // ### UI Build Methods ###
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          // KakaoMap WebView
           WebViewWidget(controller: _controller),
-
-          // Loading Overlay
           if (_isLoading)
             Container(
               color: Colors.black.withOpacity(0.5),
               child: const Center(child: CircularProgressIndicator()),
             ),
-
-          // Profile and Score (Top Left)
-          // ### MODIFIED SECTION START ###
-          // Profile, Score, and Test Button (Top Left)
-          // Profile, Score, and Test Button (Top Left)
           Positioned(
             top: 16,
             left: 16,
@@ -1124,7 +1170,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // --- 사라졌던 프로필 및 점수 위젯 ---
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
@@ -1200,8 +1245,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                     ),
                   ),
                   const SizedBox(height: 8),
-
-                  // --- 테스트 위치 설정 드롭다운 메뉴 ---
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12.0, vertical: 4.0),
@@ -1243,17 +1286,13 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               ),
             ),
           ),
-          // ### MODIFIED SECTION END ###
-
-          // Target Mission Info
-          // [수정] _showMissionBanner 조건 추가
           if (_showMissionBanner && _currentTargetPlace != null)
             Positioned(
               bottom: 30,
               left: 0,
               right: 0,
               child: AnimatedOpacity(
-                opacity: _isMenuOpen ? 0.0 : 1.0, // Hide when menu is open
+                opacity: _isMenuOpen ? 0.0 : 1.0,
                 duration: _menuAnimationDuration,
                 child: Center(
                   child: Container(
@@ -1277,20 +1316,13 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                 ),
               ),
             ),
-
-          // ▼▼▼ MODIFIED SECTION: Unified FAB Menu ▼▼▼
           _buildFabMenu(),
-          // ▲▲▲ MODIFIED SECTION: Unified FAB Menu ▲▲▲
         ],
       ),
     );
   }
 
-  // --- Helper methods for FAB Menu ---
-
-  /// Builds the entire Floating Action Button menu system.
   Widget _buildFabMenu() {
-    // A list of FABs to be displayed.
     final List<Widget> menuButtons = [
       _buildMenuOption(
         distance: 190.0,
@@ -1319,24 +1351,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               )
             : const Icon(Icons.my_location),
       ),
-      // _buildMenuOption(
-      //   distance: 70.0, // Distance from main FAB
-      //   tooltip: '인증샷 촬영',
-      //   onPressed: _pickImage,
-      //   backgroundColor:
-      //       _currentTargetPlace != null ? Colors.green : Colors.grey,
-      //   foregroundColor: Colors.white,
-      //   child: _isSubmitting
-      //       ? const SizedBox(
-      //           width: 24,
-      //           height: 24,
-      //           child: CircularProgressIndicator(
-      //             color: Colors.white,
-      //             strokeWidth: 3,
-      //           ),
-      //         )
-      //       : const Icon(Icons.camera_alt),
-      // ),
     ];
     return Positioned(
       bottom: 16,
@@ -1344,7 +1358,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       child: Stack(
         alignment: Alignment.bottomRight,
         children: [
-          // Invisible background to dismiss the menu when tapped
           if (_isMenuOpen)
             GestureDetector(
               onTap: () => setState(() => _isMenuOpen = false),
@@ -1353,11 +1366,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                 height: MediaQuery.of(context).size.height,
               ),
             ),
-
-          // The expanding menu buttons
           ...menuButtons,
-
-          // Main FAB that controls the menu
           FloatingActionButton(
             heroTag: 'mainMenuBtn',
             backgroundColor: _isMenuOpen ? Colors.white : Colors.blue,
@@ -1378,7 +1387,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
-  /// Builds a single option in the expanding FAB menu.
   Widget _buildMenuOption({
     required double distance,
     required String tooltip,
@@ -1417,9 +1425,8 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               ),
             ),
             FloatingActionButton(
-              heroTag: tooltip, // Unique heroTag prevents animation errors
+              heroTag: tooltip,
               onPressed: () {
-                // Close the menu when an option is selected
                 setState(() => _isMenuOpen = false);
                 onPressed();
               },
@@ -1434,132 +1441,101 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
-  // The rest of your methods like _buildLoadingIndicator, etc.
-  Widget _buildLoadingIndicator() {
-    String message = 'Loading map...';
-    if (_isLoading) message = 'Preparing game data...';
-    if (_isSubmitting) message = 'Analyzing photo and calculating score...';
-    return Container(
-      color: Colors.black.withOpacity(0.6),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const CircularProgressIndicator(color: Colors.white),
-            const SizedBox(height: 16),
-            Text(
-              message,
-              style: const TextStyle(color: Colors.white, fontSize: 16),
-            ),
-          ],
-        ),
-      ),
-    );
+  // 순위에 따라 적절한 메달 색상을 반환하는 함수
+  Color _getPodiumColor(int rank) {
+    switch (rank) {
+      case 1:
+        return Colors.amber; // 금색
+      case 2:
+        return Colors.grey[400]!; // 은색
+      case 3:
+        return const Color(0xFFCD7F32); // 동색
+      default:
+        return Colors.blue;
+    }
   }
 
-  Widget _buildTopProfileBar(String? profileImageUrl, String? nickname) {
-    return Positioned(
-      top: 40,
-      left: 16,
-      right: 16,
-      child: SafeArea(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(30),
-            boxShadow: const [
-              BoxShadow(
-                color: Colors.black12,
-                blurRadius: 10,
-                offset: Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
+  // ### MODIFIED METHOD START ###
+  Widget _buildPodiumItem(Map<String, dynamic> rankData, BuildContext context,
+      {bool isFirst = false}) {
+    final rank = rankData['rank'];
+    final username = rankData['username'];
+    final score = rankData['total_score'];
+    // 각 랭커의 프로필 이미지 URL을 가져옵니다.
+    final String? userImageUrl = rankData['profile_image_url'];
+
+    final double avatarRadius = isFirst ? 45 : 35;
+    final double iconSize = isFirst ? 45 : 35;
+    final EdgeInsets padding = EdgeInsets.only(bottom: isFirst ? 20.0 : 0);
+
+    return Padding(
+      padding: padding,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            alignment: Alignment.bottomCenter,
+            clipBehavior: Clip.none,
             children: [
               CircleAvatar(
-                backgroundImage: profileImageUrl != null
-                    ? NetworkImage(profileImageUrl)
-                    : null,
-                radius: 20,
-                child:
-                    profileImageUrl == null ? const Icon(Icons.person) : null,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      nickname ?? 'User',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    _isProfileLoading
-                        ? const Text(
-                            'Loading score...',
-                            style: TextStyle(fontSize: 12),
-                          )
-                        : Text(
-                            'Score: $_totalScore',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Colors.black54,
-                            ),
+                radius: avatarRadius,
+                backgroundColor: Colors.blue.withOpacity(0.3),
+                child: CircleAvatar(
+                  radius: avatarRadius - 3,
+                  backgroundColor: Colors.white,
+                  // 서버에서 받은 'profile_image_url'을 사용합니다.
+                  child: userImageUrl != null && userImageUrl.isNotEmpty
+                      ? ClipOval(
+                          child: Image.network(
+                            userImageUrl,
+                            fit: BoxFit.cover,
+                            width: (avatarRadius - 3) * 2,
+                            height: (avatarRadius - 3) * 2,
+                            // 로딩 및 에러 처리
+                            loadingBuilder: (context, child, progress) =>
+                                progress == null
+                                    ? child
+                                    : const Center(
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2)),
+                            errorBuilder: (context, error, stackTrace) => Icon(
+                                Icons.person,
+                                size: iconSize,
+                                color: Colors.grey[400]),
                           ),
-                  ],
+                        )
+                      : Icon(Icons.person,
+                          size: iconSize, color: Colors.grey[400]),
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.book_outlined, color: Colors.blueGrey),
-                tooltip: 'View Collection',
-                onPressed: _showCollectionBookDialog,
-              ),
-              IconButton(
-                icon: const Icon(
-                  Icons.leaderboard_outlined,
-                  color: Colors.blueGrey,
+              Positioned(
+                bottom: -10,
+                child: Container(
+                  padding: EdgeInsets.all(isFirst ? 6 : 5),
+                  decoration: BoxDecoration(
+                    color: _getPodiumColor(rank),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: Text(
+                    '$rank',
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
                 ),
-                tooltip: 'View Rankings',
-                onPressed: _showRankingDialog,
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButtons() {
-    return Positioned(
-      bottom: 30,
-      right: 16,
-      child: Column(
-        children: [
-          FloatingActionButton(
-            heroTag: 'location_button',
-            onPressed: isLocationLoading ? null : () => _getCurrentLocation(),
-            backgroundColor: Colors.white,
-            mini: true,
-            child: isLocationLoading
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.my_location, color: Colors.blue),
+          const SizedBox(height: 12),
+          Text(
+            username,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 10),
-          FloatingActionButton(
-            heroTag: 'photo_button',
-            onPressed: _pickImage,
-            backgroundColor: Colors.white,
-            mini: true,
-            child: const Icon(Icons.add_a_photo, color: Colors.blue),
+          const SizedBox(height: 2),
+          Text(
+            '$score pts',
+            style: TextStyle(color: Colors.grey[600], fontSize: 14),
           ),
         ],
       ),

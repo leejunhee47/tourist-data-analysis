@@ -42,6 +42,7 @@ inferencer = CLIPLoRAInference()
 # Pydantic 모델들
 class UserCreate(BaseModel):
     username: str
+    profile_image_url: Optional[str] = None
 
 class GameSessionCreate(BaseModel):
     user_id: str
@@ -88,6 +89,7 @@ async def create_user(user_data: UserCreate):
                     'user_id': TEST_GUEST_USER_ID,
                     'username': TEST_GUEST_USERNAME,
                     'total_score': 0,
+                    'profile_image_url': '', # 게스트는 프로필 이미지 없음
                     'created_at': firestore.SERVER_TIMESTAMP
                 })
                 print(f"테스트 게스트 사용자 생성: {TEST_GUEST_USER_ID}")
@@ -102,7 +104,17 @@ async def create_user(user_data: UserCreate):
         
         user_list = list(query)
         if user_list:
-            existing_user_data = user_list[0].to_dict()
+            # ▼▼▼ 기존 사용자 프로필 이미지 업데이트 로직 추가 ▼▼▼
+            existing_user_doc = user_list[0]
+            existing_user_data = existing_user_doc.to_dict()
+            
+            # 프로필 이미지 URL이 전송되었으면 업데이트
+            if user_data.profile_image_url:
+                existing_user_doc.reference.update({
+                    'profile_image_url': user_data.profile_image_url
+                })
+                print(f"기존 사용자 ({existing_user_data['user_id']}) 프로필 이미지 업데이트 완료")
+
             print(f"기존 사용자 발견: {existing_user_data['user_id']}")
             return {
                 "user_id": existing_user_data['user_id'], 
@@ -110,6 +122,7 @@ async def create_user(user_data: UserCreate):
                 "message": "기존 사용자를 성공적으로 조회했습니다."
             }
         
+        # ▼▼▼ 새 사용자 생성 시 프로필 이미지 저장 로직 추가 ▼▼▼
         user_id = str(uuid.uuid4())
         user_ref = users_ref.document(user_id)
         
@@ -117,6 +130,7 @@ async def create_user(user_data: UserCreate):
             'user_id': user_id,
             'username': user_data.username,
             'total_score': 0,
+            'profile_image_url': user_data.profile_image_url or '', # URL이 없으면 빈 문자열 저장
             'created_at': firestore.SERVER_TIMESTAMP
         })
         
@@ -360,7 +374,9 @@ async def get_rankings(limit: int = 10):
                 "rank": rank,
                 "username": user_data['username'],
                 "total_score": user_data['total_score'],
-                "user_id": user_data['user_id']
+                "user_id": user_data['user_id'],
+                # ▼▼▼ 프로필 이미지 URL 필드 추가 ▼▼▼
+                "profile_image_url": user_data.get('profile_image_url', '') # 필드가 없을 경우를 대비해 .get() 사용
             })
         
         return RankingResponse(rankings=rankings)
