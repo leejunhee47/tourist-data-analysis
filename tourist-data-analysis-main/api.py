@@ -10,6 +10,14 @@ from typing import List, Optional
 from pydantic import BaseModel
 from firebase_admin import firestore
 from firebase_config import initialize_firebase, USERS_COLLECTION, GAME_SESSIONS_COLLECTION, VISITS_COLLECTION
+from quest_system import (
+    generate_daily_quests, 
+    check_quest_completion, 
+    submit_quiz_answer, 
+    claim_quest_reward, 
+    update_quest_status_only,
+    get_quest_progress
+)
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
@@ -40,6 +48,7 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 inferencer = CLIPLoRAInference()
 
 # Pydantic 모델들
+# ▼▼▼ [수정] profile_image_url 필드 추가 ▼▼▼
 class UserCreate(BaseModel):
     username: str
     profile_image_url: Optional[str] = None
@@ -71,6 +80,15 @@ class Place(BaseModel):
 class PlacesResponse(BaseModel):
     places: List[Place]
 
+class QuestRewardRequest(BaseModel):
+    user_id: str
+    quest_id: str
+
+class QuizAnswerRequest(BaseModel):
+    user_id: str
+    quest_id: str
+    answer_index: int
+
 # 사용자 생성
 @app.post("/create_user/")
 async def create_user(user_data: UserCreate):
@@ -85,6 +103,7 @@ async def create_user(user_data: UserCreate):
             guest_user_doc = guest_user_ref.get()
             
             if not guest_user_doc.exists:
+                 # ▼▼▼ [수정] 게스트 유저 생성 시 profile_image_url 필드 추가 ▼▼▼
                 guest_user_ref.set({
                     'user_id': TEST_GUEST_USER_ID,
                     'username': TEST_GUEST_USERNAME,
@@ -104,7 +123,7 @@ async def create_user(user_data: UserCreate):
         
         user_list = list(query)
         if user_list:
-            # ▼▼▼ 기존 사용자 프로필 이미지 업데이트 로직 추가 ▼▼▼
+            # ▼▼▼ [수정] 기존 사용자 프로필 이미지 업데이트 로직 추가 ▼▼▼
             existing_user_doc = user_list[0]
             existing_user_data = existing_user_doc.to_dict()
             
@@ -122,7 +141,7 @@ async def create_user(user_data: UserCreate):
                 "message": "기존 사용자를 성공적으로 조회했습니다."
             }
         
-        # ▼▼▼ 새 사용자 생성 시 프로필 이미지 저장 로직 추가 ▼▼▼
+        # ▼▼▼ [수정] 새 사용자 생성 시 프로필 이미지 저장 로직 추가 ▼▼▼
         user_id = str(uuid.uuid4())
         user_ref = users_ref.document(user_id)
         
@@ -231,7 +250,7 @@ async def predict_location(
         
         # 점수 계산
         is_correct = predicted_place == target_place
-        score_earned = 10 if is_correct else 0
+        score_earned = 10 if is_correct else 0  # 각 관광지 방문 시 10점
         
         # Firestore 트랜잭션 시작
         transaction = db.transaction()
@@ -290,6 +309,26 @@ async def predict_location(
                 'visit_time': firestore.SERVER_TIMESTAMP
             })
             
+            return new_session_score, new_total_score
+            
+            # 방문 기록 저장
+            visit_id = str(uuid.uuid4())
+            visit_ref = db.collection(VISITS_COLLECTION).document(visit_id)
+            
+            transaction.set(visit_ref, {
+                'visit_id': visit_id,
+                'session_id': session_id,
+                'user_id': user_id,
+                'target_place': target_place,
+                'predicted_place': predicted_place,
+                'is_correct': is_correct,
+                'score_earned': score_earned,
+                'confidence': confidence,
+                'latitude': latitude,
+                'longitude': longitude,
+                'visit_time': firestore.SERVER_TIMESTAMP
+            })
+            
             return new_session_score
         
         # 세션에서 사용자 ID 가져오기
@@ -302,9 +341,32 @@ async def predict_location(
         user_id = session.to_dict()['user_id']
         
         # 트랜잭션 실행
-        update_in_transaction(transaction, session_id, user_id)
+        new_session_score, new_total_score = update_in_transaction(transaction, session_id, user_id)
+        
+        # 방문 점수 로그 출력
+        if is_correct:
+            # 실제 Firestore에서 최신 총점 확인
+            user_ref = db.collection(USERS_COLLECTION).document(user_id)
+            user_doc = user_ref.get()
+            actual_total_score = user_doc.to_dict().get('total_score', 0)
+            
+            print(f"📍 관광지 방문! 사용자 {user_id}")
+            print(f"   방문 장소: {target_place}")
+            print(f"   획득 점수: +{score_earned}점")
+            print(f"   총 점수: {actual_total_score}점 (Firestore 확인)")
+            print(f"   ──────────────────────────────")
+        
+        # 퀘스트 완료 체크 (트랜잭션 외부에서 실행)
+        completed_quests = []
+        if is_correct:
+            completed_quests = check_quest_completion(user_id, target_place)
         
         message = f"정답! +{score_earned}점" if is_correct else f"틀렸습니다. 예측: {predicted_place}, 타깃: {target_place}"
+        
+        # 퀘스트 완료 메시지 추가
+        if completed_quests:
+            quest_names = [quest['title'] for quest in completed_quests]
+            message += f"\n🎉 퀘스트 완료: {', '.join(quest_names)}"
         
         return PredictionResponse(
             predictions=results,
@@ -322,7 +384,6 @@ async def end_game(session_id: str):
     try:
         transaction = db.transaction()
         
-        # ▼▼▼ [핵심 수정 사항] 트랜잭션 함수에서 점수 합산 로직 제거 ▼▼▼
         @firestore.transactional
         def end_game_transaction(transaction, session_id):
             session_ref = db.collection(GAME_SESSIONS_COLLECTION).document(session_id)
@@ -337,8 +398,6 @@ async def end_game(session_id: str):
                 raise HTTPException(status_code=400, detail="이미 종료된 게임 세션입니다.")
             
             final_score = session_data['current_score']
-            
-            # 사용자 총점 업데이트 로직 제거 (이미 predict에서 실시간 처리됨)
             
             # 세션 종료 처리
             transaction.update(session_ref, {
@@ -370,13 +429,13 @@ async def get_rankings(limit: int = 10):
         rankings = []
         for rank, user in enumerate(users, 1):
             user_data = user.to_dict()
+            # ▼▼▼ [수정] 응답에 profile_image_url 필드 추가 ▼▼▼
             rankings.append({
                 "rank": rank,
                 "username": user_data['username'],
                 "total_score": user_data['total_score'],
                 "user_id": user_data['user_id'],
-                # ▼▼▼ 프로필 이미지 URL 필드 추가 ▼▼▼
-                "profile_image_url": user_data.get('profile_image_url', '') # 필드가 없을 경우를 대비해 .get() 사용
+                "profile_image_url": user_data.get('profile_image_url', '') # 필드가 없을 경우 대비
             })
         
         return RankingResponse(rankings=rankings)
@@ -432,6 +491,126 @@ async def get_places():
         
         return PlacesResponse(places=places_data)
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== 퀘스트 시스템 엔드포인트 ====================
+
+# 일일 퀘스트 생성/조회
+@app.get("/quests/{user_id}")
+async def get_daily_quests(user_id: str):
+    """
+    사용자의 일일 퀘스트를 생성하거나 조회합니다.
+    - 이미 오늘의 퀘스트가 있으면 조회
+    - 없으면 새로 생성
+    """
+    try:
+        quests = generate_daily_quests(user_id)
+        return {
+            "user_id": user_id,
+            "quests": quests,
+            "message": "일일 퀘스트를 성공적으로 조회했습니다."
+        }
+    except Exception as e:
+        print(f"ERROR: 퀘스트 조회 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 퀘스트 진행 상황 조회
+@app.get("/quests/{user_id}/progress")
+async def get_quest_progress_endpoint(user_id: str):
+    """
+    사용자의 퀘스트 진행 상황을 조회합니다.
+    """
+    try:
+        progress = get_quest_progress(user_id)
+        return {
+            "user_id": user_id,
+            "progress": progress,
+            "message": "퀘스트 진행 상황을 성공적으로 조회했습니다."
+        }
+    except Exception as e:
+        print(f"ERROR: 퀘스트 진행 상황 조회 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 퀴즈 답변 제출
+@app.post("/quests/quiz/answer")
+async def submit_quiz_answer_endpoint(quiz_data: QuizAnswerRequest):
+    """
+    퀴즈 퀘스트의 답변을 제출합니다.
+    """
+    print('quiz_data 확인', quiz_data)
+    try:
+        result = submit_quiz_answer(
+            user_id=quiz_data.user_id,
+            quest_id=quiz_data.quest_id,
+            answer_index=quiz_data.answer_index
+        )
+        print('result 확인', result)
+        print('API 서버에서 퀴즈 답변 처리 완료')
+        # 퀴즈 답변 제출 후 현재 총점 확인 및 출력 (정답 여부와 관계없이)
+        user_ref = db.collection(USERS_COLLECTION).document(quiz_data.user_id)
+        user_doc = user_ref.get()
+        current_total_score = user_doc.to_dict().get('total_score', 0)
+        
+        # 정답 여부와 관계없이 항상 출력
+        is_correct = result.get('is_correct', False)
+        print(f"🧩 퀴즈 답변 제출 완료! 사용자 {quiz_data.user_id}")
+        print(f"   퀴즈 결과: {'정답입니다!' if is_correct else '틀렸습니다!'}")
+        print(f"   현재 총점: {current_total_score}점 (Firestore 확인)")
+        if is_correct:
+            print(f"   보상 지급 시 +20점을 받을 수 있습니다.")
+        print(f"   ──────────────────────────────")
+        print(f"API 서버에서 총점 출력 완료: {current_total_score}점")
+        
+        return {
+            "result": result,
+            "message": "퀴즈 답변이 성공적으로 제출되었습니다."
+        }
+    except Exception as e:
+        print(f"ERROR: 퀴즈 답변 제출 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 퀘스트 보상 받기
+@app.post("/quests/reward")
+async def claim_quest_reward_endpoint(reward_data: QuestRewardRequest):
+    """
+    완료된 퀘스트의 보상을 받습니다.
+    """
+    try:
+        result = claim_quest_reward(
+            user_id=reward_data.user_id,
+            quest_id=reward_data.quest_id
+        )
+        return {
+            "result": result,
+            "message": "퀘스트 보상을 성공적으로 받았습니다."
+        }
+    except Exception as e:
+        print(f"ERROR: 퀘스트 보상 지급 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 퀘스트 상태만 변경 (점수 지급 없음)
+@app.post("/quests/status/")
+async def update_quest_status_only_endpoint(reward_data: QuestRewardRequest):
+    """
+    퀘스트 상태만 REWARD_CLAIMED로 변경합니다 (점수는 지급하지 않음).
+    배치 점수 처리를 위해 사용됩니다.
+    """
+    try:
+        result = update_quest_status_only(
+            user_id=reward_data.user_id,
+            quest_id=reward_data.quest_id
+        )
+        return {
+            "result": result,
+            "message": "퀘스트 상태가 성공적으로 변경되었습니다."
+        }
+    except Exception as e:
+        print(f"ERROR: 퀘스트 상태 변경 중 오류 발생: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

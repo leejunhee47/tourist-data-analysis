@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'PhotoItem.dart';
+import 'quest_model.dart';
 
 class KakaoMapPage extends StatefulWidget {
   final User? user;
@@ -36,13 +37,14 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   User? _currentUser;
   Timer? _missionBannerTimer;
   bool _showMissionBanner = false;
-
   // +++ 추가된 상태 변수 +++
   String? _selectedTestPlace;
   // --- Data State (from MainPage) ---
   bool _isLoading = true;
   String? _sessionId;
+  // MODIFIED: Added _allSeoulPhotos list to store other photos.
   final List<PhotoItem> _touristSpotPhotos = [];
+  final List<PhotoItem> _allSeoulPhotos = [];
   Map<String, Map<String, double>> _placeCoords = {};
   List<Map<String, dynamic>> _rankings = [];
   String? _userId;
@@ -68,6 +70,11 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     '독립문',
     '서울도서관',
   ];
+
+  List<Quest> _quests = [];
+  QuestProgress? _questProgress;
+  bool _isQuestLoading = false;
+
   @override
   void initState() {
     super.initState();
@@ -94,7 +101,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       final coords = _placeCoords[placeName]!;
       final testLatitude = coords['lat']!;
       final testLongitude = coords['lng']!;
-
       final testPosition = Position(
         latitude: testLatitude,
         longitude: testLongitude,
@@ -140,7 +146,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
 
   Future<void> _refreshKakaoUser() async {
     if (widget.isGuest) return;
-
     try {
       User updatedUser = await UserApi.instance.me();
       if (mounted) {
@@ -163,6 +168,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         _fetchTouristSpotPhotos(),
         _fetchPlaceCoordinates(),
         _fetchRankings(),
+        _fetchQuestsAndProgress(),
       ]);
       await _startGameSession();
     }
@@ -170,6 +176,47 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     if (mounted) {
       setState(() => _isLoading = false);
       _onMapReady();
+    }
+  }
+
+  // 퀘스트 정보와 진행 상황을 모두 가져오는 새 함수 추가
+  Future<void> _fetchQuestsAndProgress() async {
+    if (_userId == null) return;
+    setState(() => _isQuestLoading = true);
+    try {
+      // API에서 퀘스트 목록과 진행 상황을 동시에 가져옵니다.
+      final questsResponse =
+          await http.get(Uri.parse('$serverUrl/quests/$_userId'));
+      final progressResponse =
+          await http.get(Uri.parse('$serverUrl/quests/$_userId/progress'));
+
+      if (questsResponse.statusCode == 200 &&
+          progressResponse.statusCode == 200) {
+        final questsData = json.decode(utf8.decode(questsResponse.bodyBytes));
+
+        // ▼▼▼ 디버깅 코드 추가 ▼▼▼
+        print('--- 서버로부터 받은 퀘스트 목록 ---');
+        print(jsonEncode(questsData));
+        // ▲▲▲ 디버깅 코드 추가 ▲▲▲
+
+        final progressData =
+            json.decode(utf8.decode(progressResponse.bodyBytes));
+        if (mounted) {
+          setState(() {
+            _quests = (questsData['quests'] as List)
+                .map((q) => Quest.fromJson(q))
+                .toList();
+            _questProgress = QuestProgress.fromJson(progressData['progress']);
+          });
+        }
+      } else {
+        // 에러 처리
+        print('퀘스트 또는 진행상황 로드 실패');
+      }
+    } catch (e) {
+      print('퀘스트 데이터 로딩 오류: $e');
+    } finally {
+      if (mounted) setState(() => _isQuestLoading = false);
     }
   }
 
@@ -185,7 +232,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         : _currentUser?.kakaoAccount?.profile?.thumbnailImageUrl;
 
     if (username == null) return;
-
     try {
       final response = await http.post(
         Uri.parse('$serverUrl/create_user/'),
@@ -266,6 +312,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
+  // MODIFIED: This method now populates both mission photos and other Seoul photos.
   Future<void> _fetchTouristSpotPhotos() async {
     try {
       final url = Uri.parse('$baseUrl/galleryList1').replace(
@@ -295,6 +342,15 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             location.contains('서울시') ||
             location.contains('서울');
       }).toList();
+
+      // +추가된 부분: 필터링된 모든 서울 사진을 별도 리스트에 저장 +++
+      if (mounted) {
+        setState(() {
+          _allSeoulPhotos.clear();
+          _allSeoulPhotos.addAll(seoulPhotos);
+        });
+      }
+
       final Map<String, PhotoItem> foundPhotosMap = {};
       final Set<String> keywordsToFind = targetKeywords.toSet();
       for (final photo in seoulPhotos) {
@@ -346,12 +402,19 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
 
       if (mounted) {
         setState(() {
+          // Populate mission photos
           _touristSpotPhotos.clear();
           for (var keyword in targetKeywords) {
             if (foundPhotosMap.containsKey(keyword)) {
               _touristSpotPhotos.add(foundPhotosMap[keyword]!);
             }
           }
+          // Populate other Seoul photos by excluding mission photos
+          final Set<String> missionPhotoIds =
+              _touristSpotPhotos.map((p) => p.galContentId).toSet();
+          _allSeoulPhotos.clear();
+          _allSeoulPhotos.addAll(seoulPhotos
+              .where((p) => !missionPhotoIds.contains(p.galContentId)));
         });
       }
     } catch (e) {
@@ -430,33 +493,33 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           content: SizedBox(
             width: double.maxFinite,
             height: MediaQuery.of(context).size.height * 0.55,
-            child: Column(
-              children: [
-                if (topThree.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        vertical: 24.0, horizontal: 16.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        if (second != null) _buildPodiumItem(second, context),
-                        if (first != null)
-                          _buildPodiumItem(first, context, isFirst: true),
-                        if (third != null) _buildPodiumItem(third, context),
-                      ],
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  if (topThree.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 24.0, horizontal: 16.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          if (second != null) _buildPodiumItem(second, context),
+                          if (first != null)
+                            _buildPodiumItem(first, context, isFirst: true),
+                          if (third != null) _buildPodiumItem(third, context),
+                        ],
+                      ),
                     ),
-                  ),
-                Expanded(
-                  child: _rankings.isEmpty
+                  _rankings.isEmpty
                       ? const Center(child: Text('아직 랭킹 정보가 없습니다.'))
                       : ListView.builder(
+                          physics: const NeverScrollableScrollPhysics(),
                           shrinkWrap: true,
                           itemCount: rest.length,
                           itemBuilder: (context, index) {
                             final rankData = rest[index];
                             final username = rankData['username'];
-                            // 각 랭커의 프로필 이미지 URL을 가져옵니다.
                             final String? userImageUrl =
                                 rankData['profile_image_url'];
 
@@ -477,9 +540,9 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                       color: Colors.grey[700],
                                     ),
                                   ),
+                                  // MODIFIED: 사용자 이름이 길 경우 좌우 스크롤이 가능하도록 수정
                                   title: Row(
                                     children: [
-                                      // 서버에서 받은 'profile_image_url'을 사용합니다.
                                       CircleAvatar(
                                         radius: 20,
                                         backgroundColor: Colors.grey[200],
@@ -491,7 +554,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                                   fit: BoxFit.cover,
                                                   width: 40,
                                                   height: 40,
-                                                  // 로딩 및 에러 처리
                                                   loadingBuilder: (context,
                                                           child, progress) =>
                                                       progress == null
@@ -511,10 +573,15 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                                 color: Colors.grey),
                                       ),
                                       const SizedBox(width: 12),
-                                      Text(
-                                        username,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w500),
+                                      Expanded(
+                                        child: SingleChildScrollView(
+                                          scrollDirection: Axis.horizontal,
+                                          child: Text(
+                                            username,
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.w500),
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -531,8 +598,8 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                             );
                           },
                         ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           actions: [
@@ -547,120 +614,201 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   }
   // ### MODIFIED METHOD END ###
 
+  // MODIFIED: This entire method is rewritten to support toggling between mission and Seoul photos.
   void _showCollectionBookDialog() {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) {
-        final PageController pageController = PageController();
-        return AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.book, color: Colors.brown),
-              SizedBox(width: 8),
-              Text('나의 컬렉션 북'),
-            ],
-          ),
-          content: SizedBox(
-            width: double.maxFinite,
-            height: MediaQuery.of(context).size.height * 0.4,
-            child: _touristSpotPhotos.isEmpty
-                ? const Center(child: Text('수집할 관광지 사진이 없습니다.'))
-                : Column(
-                    children: [
-                      Expanded(
-                        child: PageView.builder(
-                          controller: pageController,
-                          itemCount: (_touristSpotPhotos.length / 4).ceil(),
-                          itemBuilder: (context, pageIndex) {
-                            final startIndex = pageIndex * 4;
-                            final endIndex = (startIndex + 4).clamp(
-                              0,
-                              _touristSpotPhotos.length,
-                            );
-                            final photos = _touristSpotPhotos.sublist(
-                              startIndex,
-                              endIndex,
-                            );
-                            return GridView.builder(
-                              physics: const NeverScrollableScrollPhysics(),
+        bool showWeekly = true;
+        final Set<String> brokenUrls = {};
+
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setState) {
+            final currentList =
+                showWeekly ? _touristSpotPhotos : _allSeoulPhotos;
+            final displayList = currentList
+                .where((p) => !brokenUrls.contains(p.galWebImageUrl))
+                .toList();
+
+            // ### MODIFIED METHOD START ###
+            // 수정된 에러 핸들러: 실패 시 빈 공간을 반환
+            Widget errorBuilder(String url, Object error) {
+              final bool isPermanentError =
+                  error is NetworkImageLoadException && error.statusCode == 404;
+
+              // 404 오류인 경우에만 목록에서 영구적으로 제거합니다.
+              if (isPermanentError) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!brokenUrls.contains(url)) {
+                    setState(() {
+                      brokenUrls.add(url);
+                    });
+                  }
+                });
+              }
+
+              // 모든 오류에 대해 빈 위젯을 반환하여 보이지 않게 처리합니다.
+              return const SizedBox.shrink();
+            }
+            // ### MODIFIED METHOD END ###
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15.0)),
+              titlePadding: const EdgeInsets.all(0),
+              title: const Padding(
+                padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
+                child: Row(
+                  children: [
+                    Icon(Icons.book, color: Colors.brown),
+                    SizedBox(width: 8),
+                    Text('나의 컬렉션 북'),
+                  ],
+                ),
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: MediaQuery.of(context).size.height * 0.6,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16.0),
+                      child: Container(
+                        width: 300,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => setState(() => showWeekly = true),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: showWeekly
+                                        ? const Color(0xFF0F2C3A)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    "미션 관광지 보기",
+                                    style: TextStyle(
+                                      color: showWeekly
+                                          ? Colors.white
+                                          : Colors.black54,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => setState(() => showWeekly = false),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: !showWeekly
+                                        ? const Color(0xFF0F2C3A)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    "서울 관광지 보기",
+                                    style: TextStyle(
+                                      color: !showWeekly
+                                          ? Colors.white
+                                          : Colors.black54,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // 세로 스크롤이 가능한 그리드 뷰
+                    Expanded(
+                      child: displayList.isEmpty
+                          ? const Center(child: Text('수집할 관광지 사진이 없습니다.'))
+                          : GridView.builder(
                               gridDelegate:
                                   const SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: 2,
-                                childAspectRatio: 1.0,
-                                crossAxisSpacing: 8,
-                                mainAxisSpacing: 8,
+                                childAspectRatio: 0.8,
+                                crossAxisSpacing: 10,
+                                mainAxisSpacing: 10,
                               ),
-                              itemCount: photos.length,
+                              itemCount: displayList.length,
                               itemBuilder: (context, index) {
-                                final photo = photos[index];
-
-                                final isVisited = _visitHistory.any(
-                                  (visit) =>
-                                      (visit['is_correct'] == true ||
-                                          visit['is_correct'] == 1) &&
-                                      photo.galTitle.contains(
-                                        visit['target_place'],
-                                      ),
-                                );
-
+                                final photo = displayList[index];
+                                final isVisited = _visitHistory.any((visit) =>
+                                    (visit['is_correct'] == true ||
+                                        visit['is_correct'] == 1) &&
+                                    photo.galTitle
+                                        .contains(visit['target_place']));
                                 return Card(
                                   clipBehavior: Clip.antiAlias,
                                   elevation: 3,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12)),
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
                                     children: [
                                       Expanded(
-                                        child: isVisited
+                                        child: (!showWeekly || isVisited)
+                                            // 컬러 이미지
                                             ? Image.network(
                                                 photo.galWebImageUrl,
                                                 fit: BoxFit.cover,
                                                 errorBuilder: (c, e, s) =>
-                                                    const Center(
-                                                  child: Icon(
-                                                    Icons.broken_image,
-                                                    size: 50,
-                                                    color: Colors.grey,
-                                                  ),
-                                                ),
+                                                    errorBuilder(
+                                                        photo.galWebImageUrl,
+                                                        e),
                                               )
+                                            // 흑백 이미지
                                             : ColorFiltered(
-                                                colorFilter:
-                                                    const ColorFilter.matrix(
-                                                  <double>[
-                                                    0.2126,
-                                                    0.7152,
-                                                    0.0722,
-                                                    0,
-                                                    0,
-                                                    0.2126,
-                                                    0.7152,
-                                                    0.0722,
-                                                    0,
-                                                    0,
-                                                    0.2126,
-                                                    0.7152,
-                                                    0.0722,
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    1,
-                                                    0,
-                                                  ],
-                                                ),
+                                                colorFilter: const ColorFilter
+                                                    .matrix(<double>[
+                                                  0.2126,
+                                                  0.7152,
+                                                  0.0722,
+                                                  0,
+                                                  0,
+                                                  0.2126,
+                                                  0.7152,
+                                                  0.0722,
+                                                  0,
+                                                  0,
+                                                  0.2126,
+                                                  0.7152,
+                                                  0.0722,
+                                                  0,
+                                                  0,
+                                                  0,
+                                                  0,
+                                                  0,
+                                                  1,
+                                                  0,
+                                                ]),
                                                 child: Image.network(
                                                   photo.galWebImageUrl,
                                                   fit: BoxFit.cover,
                                                   errorBuilder: (c, e, s) =>
-                                                      const Center(
-                                                    child: Icon(
-                                                      Icons.broken_image,
-                                                      size: 50,
-                                                      color: Colors.grey,
-                                                    ),
-                                                  ),
+                                                      errorBuilder(
+                                                          photo.galWebImageUrl,
+                                                          e),
                                                 ),
                                               ),
                                       ),
@@ -673,7 +821,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                             fontSize: 13,
                                             fontWeight: FontWeight.w500,
                                           ),
-                                          maxLines: 1,
+                                          maxLines: 2,
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
@@ -681,30 +829,19 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                   ),
                                 );
                               },
-                            );
-                          },
-                        ),
-                      ),
-                      if ((_touristSpotPhotos.length / 4).ceil() > 1)
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: List.generate(
-                              (_touristSpotPhotos.length / 4).ceil(),
-                              (index) => buildDot(index, pageController),
                             ),
-                          ),
-                        ),
-                    ],
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('닫기'),
-            ),
-          ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('닫기'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -731,6 +868,10 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       },
     );
   }
+
+  // MODIFIED: This function is no longer needed at the class level.
+  // It has been moved inside the `_showCollectionBookDialog`'s `StatefulBuilder`.
+  // Widget buildDot(...) { ... }
 
   void _initializeWebView() {
     _controller = WebViewController()
@@ -860,10 +1001,143 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       await _controller.runJavaScript('fitMapBounds(${jsonEncode(allPoints)})');
   }
 
+  /// ▼▼▼ [수정] 거리 표기 단위를 1000m 이상일 때 km로 변환 ▼▼▼
+  void _showPredictionResultOverlay({
+    required bool isCorrect,
+    required String message,
+    required int scoreEarned,
+  }) {
+    if (!mounted) return;
+
+    // --- 결과 표시 위젯의 컨텐츠 생성 ---
+    final Widget resultTitle = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(
+          isCorrect ? Icons.check_circle : Icons.cancel,
+          color: isCorrect ? Colors.green : Colors.red,
+          size: 28,
+        ),
+        const SizedBox(width: 10),
+        Text(
+          isCorrect ? '예측 성공!' : '예측 실패',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+        ),
+      ],
+    );
+
+    Widget resultContent;
+    if (isCorrect) {
+      resultContent = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            "정답입니다!",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 18),
+          ),
+          if (scoreEarned > 0) ...[
+            const SizedBox(height: 12),
+            Text(
+              '+$scoreEarned 점',
+              style: const TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                color: Colors.blue,
+              ),
+            ),
+          ],
+        ],
+      );
+    } else {
+      String serverMessage = message;
+      // 사용자의 실제 거리만 조건부로 km로 변환하는 로직
+      try {
+        final RegExp distanceRegex = RegExp(r'(\d+(\.\d+)?)\s*m');
+        final Match? match = distanceRegex.firstMatch(serverMessage);
+
+        if (match != null && match.group(0) != null && match.group(1) != null) {
+          final double distanceInMeters = double.parse(match.group(1)!);
+
+          // 변환 조건: 1000m 이상일 경우
+          if (distanceInMeters >= 1000) {
+            final double distanceInKm = distanceInMeters / 1000.0;
+            final String formattedKm = distanceInKm.toStringAsFixed(2);
+            // replaceFirst를 사용해 첫 번째로 발견된 거리만 km로 변경
+            serverMessage =
+                serverMessage.replaceFirst(match.group(0)!, '$formattedKm km');
+          }
+        }
+      } catch (e) {
+        print("선택적 거리 변환 실패: $e");
+      }
+
+      String mainMessage = serverMessage;
+      String details = '';
+      if (serverMessage.contains('. ')) {
+        final parts = serverMessage.split('. ');
+        mainMessage = '${parts[0]}.';
+        details = parts.length > 1 ? parts[1].replaceAll(', ', '\n') : '';
+      }
+      resultContent = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(mainMessage,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 17)),
+          if (details.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              details,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 15, color: Colors.grey.shade700),
+            )
+          ]
+        ],
+      );
+    }
+
+    // --- 다이얼로그 스타일의 컨테이너 위젯 ---
+    final overlayContent = Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 40.0), // 좌우 여백
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        decoration: BoxDecoration(
+          color: Theme.of(context).dialogBackgroundColor,
+          borderRadius: BorderRadius.circular(20.0),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black26,
+              blurRadius: 10.0,
+              offset: Offset(0.0, 4.0),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            resultTitle,
+            const SizedBox(height: 20),
+            resultContent,
+          ],
+        ),
+      ),
+    );
+
+    // --- 자동 사라짐 오버레이 표시 ---
+    _showAutoDismissingOverlay(
+      child: overlayContent,
+      duration: const Duration(seconds: 3),
+    );
+  }
+  // ▲▲▲ 수정 완료 ▲▲▲
+
   Future<void> _submitPrediction(File imageFile, String targetPlace) async {
     if (currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Current location is unknown.')),
+      _showPredictionResultOverlay(
+        isCorrect: false,
+        message: '현재 위치를 알 수 없습니다. 위치 서비스를 확인해주세요.',
+        scoreEarned: 0,
       );
       return;
     }
@@ -878,9 +1152,14 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               await http.MultipartFile.fromPath('image', imageFile.path),
             );
       final response = await request.send();
-      final responseData = json.decode(await response.stream.bytesToString());
+      final responseBody = await response.stream.bytesToString();
+      final responseData = json.decode(responseBody);
+
       if (response.statusCode == 200) {
         final bool isCorrect = responseData['is_correct'];
+        final String message = responseData['message'];
+        final int scoreEarned = responseData['score_earned'] ?? 0;
+
         if (isCorrect) {
           final photoItem = _touristSpotPhotos.firstWhere(
             (p) => p.galTitle.contains(targetPlace),
@@ -898,29 +1177,37 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         }
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Result: ${responseData['message']} (+${responseData['score_earned']} pts)',
-              ),
-              backgroundColor:
-                  responseData['is_correct'] ? Colors.green : Colors.orange,
-            ),
+          // 수정된 오버레이 함수 호출 (await 없음)
+          _showPredictionResultOverlay(
+            isCorrect: isCorrect,
+            message: message,
+            scoreEarned: scoreEarned,
           );
-          await _fetchUserProfile(_userId!);
-          await _fetchRankings();
+          // UI 표시와 동시에 데이터 새로고침
+          _fetchUserProfile(_userId!);
+          _fetchRankings();
+          _fetchQuestsAndProgress();
         }
       } else {
-        throw Exception(responseData['detail']);
+        throw Exception(responseData['detail'] ?? '서버에서 오류가 발생했습니다.');
+      }
+    } on SocketException {
+      // 네트워크 연결이 없는 경우
+      if (mounted) {
+        _showPredictionResultOverlay(
+          isCorrect: false,
+          message: '네트워크 연결을 확인해주세요.',
+          scoreEarned: 0,
+        );
       }
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('An error occurred: $e'),
-            backgroundColor: Colors.red,
-          ),
+      if (mounted) {
+        _showPredictionResultOverlay(
+          isCorrect: false,
+          message: '오류가 발생했습니다: $e',
+          scoreEarned: 0,
         );
+      }
     }
   }
 
@@ -944,6 +1231,33 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     } catch (e) {
       print('Image selection error: $e');
     }
+  }
+
+  /// ▼▼▼ [수정] 재사용 가능한 자동 사라짐 오버레이 함수 ▼▼▼
+  void _showAutoDismissingOverlay({
+    required Widget child,
+    required Duration duration,
+  }) {
+    final overlay = Overlay.of(context);
+    late OverlayEntry overlayEntry;
+
+    overlayEntry = OverlayEntry(
+      builder: (context) => FadeIn(
+        child: IgnorePointer(
+          // UI 뒤의 다른 위젯 터치를 막지 않음
+          child: Material(
+            color: Colors.transparent,
+            child: child,
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(overlayEntry);
+
+    Timer(duration, () {
+      overlayEntry.remove();
+    });
   }
 
   Future<void> _recenterMapToCurrentLocation() async {
@@ -971,6 +1285,24 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               'addCurrentLocationMarker(${position.latitude}, ${position.longitude}, true);';
           await _controller.runJavaScript(jsCode);
         }
+        // 간단한 텍스트 토스트 표시
+        _showAutoDismissingOverlay(
+          duration: const Duration(seconds: 2),
+          child: Center(
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(25.0),
+                color: Colors.black.withOpacity(0.75),
+              ),
+              child: const Text(
+                '📍 현재 위치로 지도를 이동했습니다.',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -982,6 +1314,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       if (mounted) setState(() => isLocationLoading = false);
     }
   }
+  // ▲▲▲ 수정 완료 ▲▲▲
 
   Future<void> _pickImage() async {
     showModalBottomSheet(
@@ -1325,6 +1658,13 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   Widget _buildFabMenu() {
     final List<Widget> menuButtons = [
       _buildMenuOption(
+        // <--- 새로운 퀘스트 버튼 추가
+        distance: 250.0, // 다른 버튼과 겹치지 않게 거리 조정
+        tooltip: '퀘스트 목록',
+        onPressed: _showQuestDialog, // 퀘스트 다이얼로그를 여는 함수
+        child: const Icon(Icons.assignment_turned_in_outlined),
+      ),
+      _buildMenuOption(
         distance: 190.0,
         tooltip: '컬렉션 북',
         onPressed: _showCollectionBookDialog,
@@ -1383,6 +1723,253 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // 퀘스트 목록 다이얼로그 표시
+  void _showQuestDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        // StatefulBuilder를 사용해 다이얼로그 내부 상태만 업데이트
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('오늘의 퀘스트'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: _isQuestLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_questProgress != null)
+                            _buildProgressBar(_questProgress!), // 진행상황 바
+                          const SizedBox(height: 16),
+                          Expanded(
+                            child: ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: _quests.length,
+                              itemBuilder: (context, index) {
+                                final quest = _quests[index];
+                                // 퀘스트 상태에 따라 다른 카드 위젯 반환
+                                switch (quest.status) {
+                                  case 'active':
+                                    return _buildActiveQuestCard(
+                                        quest, setDialogState);
+                                  case 'reward_ready':
+                                    return _buildRewardReadyCard(
+                                        quest, setDialogState);
+                                  case 'reward_claimed':
+                                    return _buildCompletedQuestCard(quest);
+                                  default:
+                                    return Card(
+                                        child:
+                                            ListTile(title: Text(quest.title)));
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('닫기'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // 진행 상황 바 위젯
+  Widget _buildProgressBar(QuestProgress progress) {
+    return Column(
+      children: [
+        LinearProgressIndicator(
+          value: progress.progressPercentage / 100,
+          minHeight: 10,
+          borderRadius: BorderRadius.circular(5),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('🎁 보상 대기: ${progress.rewardReadyQuests}개'),
+            Text('획득 가능: +${progress.availableReward}점',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, color: Colors.blue)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // "진행 중" 상태의 퀘스트 카드
+  // "진행 중" 상태의 퀘스트 카드
+  Widget _buildActiveQuestCard(Quest quest, StateSetter setDialogState) {
+    // 퀘스트 타입이 'history_quiz'이고 아직 풀지 않았다면 퀴즈 UI를 보여줌
+    if (quest.type == 'history_quiz' && quest.isAnswered != true) {
+      return Card(
+        color: Colors.blue[50],
+        child: ExpansionTile(
+          // ExpansionTile로 질문과 답변을 감싸서 UI를 깔끔하게 만듭니다.
+          key: PageStorageKey(quest.questId), // 스크롤 시 상태 유지를 위해 Key 추가
+          title: Text(quest.title),
+          subtitle: Text('퀴즈를 풀어보세요! (+${quest.points}점)'),
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(quest.quizQuestion ?? '문제를 불러오는 데 실패했습니다.',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  // quizOptions를 기반으로 선택지를 만듭니다.
+                  ...(quest.quizOptions ?? []).asMap().entries.map((entry) {
+                    int idx = entry.key;
+                    String option = entry.value;
+                    return ListTile(
+                      title: Text(option),
+                      onTap: () async {
+                        // 답변을 선택하면 API를 호출합니다.
+                        await _submitQuizAnswer(quest.questId, idx);
+                        // 기존 다이얼로그를 닫고, 새로고침된 정보로 다시 엽니다.
+                        if (mounted) {
+                          Navigator.of(context).pop();
+                          _showQuestDialog();
+                        }
+                      },
+                    );
+                  }).toList(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    // 'history_quiz'가 아닌 다른 'active' 퀘스트 (예: theme_mission)
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.tour),
+        title: Text(quest.title),
+        subtitle: Text(
+            '목표: ${quest.completedPlaces.length} / ${quest.requiredVisits}'),
+      ),
+    );
+  }
+
+  // "보상 받기" 상태의 퀘스트 카드
+  Widget _buildRewardReadyCard(Quest quest, StateSetter setDialogState) {
+    return Card(
+      color: Colors.orange[100],
+      child: ListTile(
+        leading: const Text('🎁', style: TextStyle(fontSize: 24)),
+        title: Text(quest.title),
+        subtitle: Text('보상: +${quest.points}점'),
+        trailing: ElevatedButton(
+          onPressed: () => _claimReward(quest.questId, setDialogState),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orange,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('보상 받기'),
+        ),
+      ),
+    );
+  }
+
+  // 퀴즈 답변 제출 API 호출
+  Future<void> _submitQuizAnswer(String questId, int answerIndex) async {
+    if (_userId == null) return;
+    try {
+      final response = await http.post(
+        Uri.parse('$serverUrl/quests/quiz/answer'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': _userId!,
+          'quest_id': questId,
+          'answer_index': answerIndex,
+        }),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        final result = data['result'];
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message']),
+            backgroundColor: result['is_correct'] ? Colors.green : Colors.red,
+          ),
+        );
+        // 답변 제출 후 퀘스트 목록과 프로필 정보(점수) 새로고침
+        await Future.wait(
+            [_fetchQuestsAndProgress(), _fetchUserProfile(_userId!)]);
+      }
+    } catch (e) {
+      print('퀴즈 답변 제출 오류: $e');
+    }
+  }
+
+  // 보상 받기 API 호출
+  Future<void> _claimReward(String questId, StateSetter setDialogState) async {
+    if (_userId == null) return;
+    try {
+      final response = await http.post(
+        Uri.parse('$serverUrl/quests/reward'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': _userId!,
+          'quest_id': questId,
+        }),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        final result = data['result'];
+        final int rewardPoints = result['reward_points'] ?? 0;
+
+        // 보상 획득 애니메이션/알림 표시
+        showDialog(
+          context: context,
+          builder: (dContext) => AlertDialog(
+            title: const Text('🎉 축하합니다!'),
+            content: Text('+$rewardPoints점을 획득했습니다!'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dContext),
+                  child: const Text('확인'))
+            ],
+          ),
+        );
+
+        // 보상 수령 후 퀘스트 목록과 프로필 정보(점수) 새로고침
+        await Future.wait(
+            [_fetchQuestsAndProgress(), _fetchUserProfile(_userId!)]);
+
+        // 다이얼로그 UI 갱신
+        setDialogState(() {});
+      }
+    } catch (e) {
+      print('보상 받기 오류: $e');
+    }
+  }
+
+  // "완료" 상태의 퀘스트 카드
+  Widget _buildCompletedQuestCard(Quest quest) {
+    return Card(
+      color: Colors.grey[300],
+      child: ListTile(
+        leading: const Icon(Icons.check_circle, color: Colors.green),
+        title: Text(quest.title,
+            style: const TextStyle(decoration: TextDecoration.lineThrough)),
+        subtitle: Text('보상 +${quest.points}점 획득 완료'),
       ),
     );
   }
@@ -1461,13 +2048,10 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     final rank = rankData['rank'];
     final username = rankData['username'];
     final score = rankData['total_score'];
-    // 각 랭커의 프로필 이미지 URL을 가져옵니다.
     final String? userImageUrl = rankData['profile_image_url'];
-
     final double avatarRadius = isFirst ? 45 : 35;
     final double iconSize = isFirst ? 45 : 35;
     final EdgeInsets padding = EdgeInsets.only(bottom: isFirst ? 20.0 : 0);
-
     return Padding(
       padding: padding,
       child: Column(
@@ -1483,7 +2067,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                 child: CircleAvatar(
                   radius: avatarRadius - 3,
                   backgroundColor: Colors.white,
-                  // 서버에서 받은 'profile_image_url'을 사용합니다.
                   child: userImageUrl != null && userImageUrl.isNotEmpty
                       ? ClipOval(
                           child: Image.network(
@@ -1491,7 +2074,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                             fit: BoxFit.cover,
                             width: (avatarRadius - 3) * 2,
                             height: (avatarRadius - 3) * 2,
-                            // 로딩 및 에러 처리
                             loadingBuilder: (context, child, progress) =>
                                 progress == null
                                     ? child
@@ -1527,10 +2109,35 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             ],
           ),
           const SizedBox(height: 12),
-          Text(
-            username,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            overflow: TextOverflow.ellipsis,
+          // MODIFIED: 사용자 이름이 길 경우 좌우 스크롤이 가능하도록 너비를 제한
+          Builder(
+            builder: (context) {
+              const style =
+                  TextStyle(fontWeight: FontWeight.bold, fontSize: 16);
+              final maxWidth = avatarRadius * 2;
+
+              // TextPainter를 사용해 텍스트의 실제 너비를 계산합니다.
+              final textPainter = TextPainter(
+                text: TextSpan(text: username, style: style),
+                maxLines: 1,
+                textDirection: TextDirection.ltr,
+              )..layout();
+
+              // 텍스트 너비가 최대 너비보다 크면 스크롤 뷰를 사용합니다.
+              if (textPainter.size.width > maxWidth) {
+                return SizedBox(
+                  width: maxWidth,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Text(username, style: style),
+                  ),
+                );
+              } else {
+                // 그렇지 않으면 일반 Text 위젯을 사용해 중앙 정렬합니다.
+                return Text(username,
+                    style: style, textAlign: TextAlign.center);
+              }
+            },
           ),
           const SizedBox(height: 2),
           Text(
@@ -1539,6 +2146,46 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// ▼▼▼ [추가] 오버레이 애니메이션을 위한 별도 위젯 ▼▼▼
+class FadeIn extends StatefulWidget {
+  final Widget child;
+  const FadeIn({super.key, required this.child});
+
+  @override
+  State<FadeIn> createState() => _FadeInState();
+}
+
+class _FadeInState extends State<FadeIn> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+        duration: const Duration(milliseconds: 300), vsync: this);
+    _opacity = Tween<double>(begin: 0.0, end: 1.0)
+        .animate(CurvedAnimation(parent: _controller, curve: Curves.easeIn));
+
+    // 애니메이션 시작
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: widget.child,
     );
   }
 }
