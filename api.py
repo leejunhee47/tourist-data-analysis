@@ -1,18 +1,15 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 import shutil
 import os
 import uuid
-import traceback
-from contextlib import asynccontextmanager
+import traceback # 이 라인을 파일 상단에 추가해주세요.
+from datetime import datetime
 from clip_lora_inference import CLIPLoRAInference
 from typing import List, Optional
 from pydantic import BaseModel
 from firebase_admin import firestore
 from firebase_config import initialize_firebase, USERS_COLLECTION, GAME_SESSIONS_COLLECTION, VISITS_COLLECTION
-<<<<<<< HEAD
-=======
 from quest_system import (
     generate_daily_quests, 
     check_quest_completion, 
@@ -22,40 +19,13 @@ from quest_system import (
     get_quest_progress,
     create_history_quiz_quests  # 복수형 함수 import
 )
->>>>>>> 5ae22db (Update quiz and visit quest code)
 from fastapi.staticfiles import StaticFiles
 
-# --- 모델 인스턴스를 저장할 변수 ---
-inferencer = None
-
-# @asynccontextmanager
-# async def lifespan(app: FastAPI):
-#     # 앱 시작 시 실행될 코드
-#     global inferencer
-#     print("서버 시작: CLIP-LoRA 모델을 로드합니다...")
-#     inferencer = CLIPLoRAInference()
-#     print("모델 로딩 완료.")
-#     yield
-#     # 앱 종료 시 실행될 코드 (필요 시)
-#     print("서버 종료.")
-
-# app = FastAPI(lifespan=lifespan)
-# FastAPI 앱 생성 (lifespan 인자 제거)
 app = FastAPI()
 
-# 여기에 startup 이벤트 핸들러 추가
-@app.on_event("startup")
-async def load_model():
-    global inferencer
-    print("서버 시작: CLIP-LoRA 모델 로드 중…")
-    inferencer = CLIPLoRAInference()
-    print("모델 로딩 완료.")
-    
-MAX_DISTANCE_M = 100
-
-# 정적 파일 마운트
 app.mount("/map_images", StaticFiles(directory="map_images"), name="map_images")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+MAX_DISTANCE_M = 100
 
 # CORS 설정
 app.add_middleware(
@@ -69,18 +39,20 @@ app.add_middleware(
 # Firebase 초기화
 db = initialize_firebase()
 if not db:
-    raise Exception("Firebase 초기화에 실패했습니다.")
+    raise Exception("실패")
 
 # 임시 이미지 저장 폴더 생성
 TEMP_DIR = "temp_images"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# CLIP-LoRA 모델 초기화 (lifespan으로 이동)
-# inferencer = CLIPLoRAInference()
+# CLIP-LoRA 모델 초기화
+inferencer = CLIPLoRAInference()
 
 # Pydantic 모델들
+# ▼▼▼ [수정] profile_image_url 필드 추가 ▼▼▼
 class UserCreate(BaseModel):
     username: str
+    profile_image_url: Optional[str] = None
 
 class GameSessionCreate(BaseModel):
     user_id: str
@@ -101,7 +73,6 @@ class UserProfileResponse(BaseModel):
     total_score: int
     visit_history: List[dict]
 
-# Pydantic 모델 추가
 class Place(BaseModel):
     name: str
     latitude: float
@@ -110,17 +81,63 @@ class Place(BaseModel):
 class PlacesResponse(BaseModel):
     places: List[Place]
 
+class QuestRewardRequest(BaseModel):
+    user_id: str
+    quest_id: str
+
+class QuizAnswerRequest(BaseModel):
+    user_id: str
+    quest_id: str
+    answer_index: int
+
+class QuizQuestCreateRequest(BaseModel):
+    user_id: str
+
 # 사용자 생성
 @app.post("/create_user/")
 async def create_user(user_data: UserCreate):
+    TEST_GUEST_USERNAME = "게스트유저"
+    TEST_GUEST_USER_ID = "guest-test-user-001"
+
     try:
-        # 사용자명 중복 확인
         users_ref = db.collection(USERS_COLLECTION)
+
+        if user_data.username == TEST_GUEST_USERNAME:
+            guest_user_ref = users_ref.document(TEST_GUEST_USER_ID)
+            guest_user_doc = guest_user_ref.get()
+            
+            if not guest_user_doc.exists:
+                 # ▼▼▼ [수정] 게스트 유저 생성 시 profile_image_url 필드 추가 ▼▼▼
+                guest_user_ref.set({
+                    'user_id': TEST_GUEST_USER_ID,
+                    'username': TEST_GUEST_USERNAME,
+                    'total_score': 0,
+                    'profile_image_url': '', # 게스트는 프로필 이미지 없음
+                    'created_at': firestore.SERVER_TIMESTAMP
+                })
+                print(f"테스트 게스트 사용자 생성: {TEST_GUEST_USER_ID}")
+
+            return {
+                "user_id": TEST_GUEST_USER_ID, 
+                "username": TEST_GUEST_USERNAME, 
+                "message": "게스트 사용자를 성공적으로 조회했습니다."
+            }
+
         query = users_ref.where('username', '==', user_data.username).limit(1).get()
         
         user_list = list(query)
         if user_list:
-            existing_user_data = user_list[0].to_dict()
+            # ▼▼▼ [수정] 기존 사용자 프로필 이미지 업데이트 로직 추가 ▼▼▼
+            existing_user_doc = user_list[0]
+            existing_user_data = existing_user_doc.to_dict()
+            
+            # 프로필 이미지 URL이 전송되었으면 업데이트
+            if user_data.profile_image_url:
+                existing_user_doc.reference.update({
+                    'profile_image_url': user_data.profile_image_url
+                })
+                print(f"기존 사용자 ({existing_user_data['user_id']}) 프로필 이미지 업데이트 완료")
+
             print(f"기존 사용자 발견: {existing_user_data['user_id']}")
             return {
                 "user_id": existing_user_data['user_id'], 
@@ -128,7 +145,7 @@ async def create_user(user_data: UserCreate):
                 "message": "기존 사용자를 성공적으로 조회했습니다."
             }
         
-        # 사용자가 없으면 새로 생성
+        # ▼▼▼ [수정] 새 사용자 생성 시 프로필 이미지 저장 로직 추가 ▼▼▼
         user_id = str(uuid.uuid4())
         user_ref = users_ref.document(user_id)
         
@@ -136,14 +153,16 @@ async def create_user(user_data: UserCreate):
             'user_id': user_id,
             'username': user_data.username,
             'total_score': 0,
+            'profile_image_url': user_data.profile_image_url or '', # URL이 없으면 빈 문자열 저장
             'created_at': firestore.SERVER_TIMESTAMP
         })
         
         return {"user_id": user_id, "username": user_data.username, "message": "사용자가 생성되었습니다."}
     except Exception as e:
-        print(f"ERROR: 사용자 생성 중 오류 발생: {e}") # 이 라인 추가
-        traceback.print_exc() # 이 라인 추가: 전체 오류 스택 출력
+        print(f"ERROR: 사용자 생성 중 오류 발생: {e}") 
+        traceback.print_exc() 
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # 게임 세션 시작
 @app.post("/start_game/")
@@ -235,25 +254,45 @@ async def predict_location(
         
         # 점수 계산
         is_correct = predicted_place == target_place
-        score_earned = 10 if is_correct else 0
+        score_earned = 10 if is_correct else 0  # 각 관광지 방문 시 10점
         
         # Firestore 트랜잭션 시작
         transaction = db.transaction()
         
         @firestore.transactional
         def update_in_transaction(transaction, session_id, user_id):
-            # 세션 업데이트
+            # 모든 읽기 작업을 먼저 수행
+            # 세션 읽기
             session_ref = db.collection(GAME_SESSIONS_COLLECTION).document(session_id)
             session = session_ref.get(transaction=transaction)
             
             if not session.exists:
                 raise HTTPException(status_code=404, detail="게임 세션을 찾을 수 없습니다.")
             
-            session_data = session.to_dict()
-            new_score = session_data.get('current_score', 0) + score_earned
+            # 사용자 읽기
+            user_ref = db.collection(USERS_COLLECTION).document(user_id)
+            user = user_ref.get(transaction=transaction)
             
+            if not user.exists:
+                raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+            
+            # 읽은 데이터로 새로운 값 계산
+            session_data = session.to_dict()
+            new_session_score = session_data.get('current_score', 0) + score_earned
+            
+            user_data = user.to_dict()
+            current_total_score = user_data.get('total_score', 0)
+            new_total_score = current_total_score + score_earned
+            
+            # 모든 쓰기 작업을 나중에 수행
+            # 세션 업데이트
             transaction.update(session_ref, {
-                'current_score': new_score
+                'current_score': new_session_score
+            })
+            
+            # 사용자 총점 업데이트
+            transaction.update(user_ref, {
+                'total_score': new_total_score
             })
             
             # 방문 기록 저장
@@ -274,7 +313,27 @@ async def predict_location(
                 'visit_time': firestore.SERVER_TIMESTAMP
             })
             
-            return new_score
+            return new_session_score, new_total_score
+            
+            # 방문 기록 저장
+            visit_id = str(uuid.uuid4())
+            visit_ref = db.collection(VISITS_COLLECTION).document(visit_id)
+            
+            transaction.set(visit_ref, {
+                'visit_id': visit_id,
+                'session_id': session_id,
+                'user_id': user_id,
+                'target_place': target_place,
+                'predicted_place': predicted_place,
+                'is_correct': is_correct,
+                'score_earned': score_earned,
+                'confidence': confidence,
+                'latitude': latitude,
+                'longitude': longitude,
+                'visit_time': firestore.SERVER_TIMESTAMP
+            })
+            
+            return new_session_score
         
         # 세션에서 사용자 ID 가져오기
         session_ref = db.collection(GAME_SESSIONS_COLLECTION).document(session_id)
@@ -286,9 +345,32 @@ async def predict_location(
         user_id = session.to_dict()['user_id']
         
         # 트랜잭션 실행
-        update_in_transaction(transaction, session_id, user_id)
+        new_session_score, new_total_score = update_in_transaction(transaction, session_id, user_id)
+        
+        # 방문 점수 로그 출력
+        if is_correct:
+            # 실제 Firestore에서 최신 총점 확인
+            user_ref = db.collection(USERS_COLLECTION).document(user_id)
+            user_doc = user_ref.get()
+            actual_total_score = user_doc.to_dict().get('total_score', 0)
+            
+            print(f"📍 관광지 방문! 사용자 {user_id}")
+            print(f"   방문 장소: {target_place}")
+            print(f"   획득 점수: +{score_earned}점")
+            print(f"   총 점수: {actual_total_score}점 (Firestore 확인)")
+            print(f"   ──────────────────────────────")
+        
+        # 퀘스트 완료 체크 (트랜잭션 외부에서 실행)
+        completed_quests = []
+        if is_correct:
+            completed_quests = check_quest_completion(user_id, target_place)
         
         message = f"정답! +{score_earned}점" if is_correct else f"틀렸습니다. 예측: {predicted_place}, 타깃: {target_place}"
+        
+        # 퀘스트 완료 메시지 추가
+        if completed_quests:
+            quest_names = [quest['title'] for quest in completed_quests]
+            message += f"\n🎉 퀘스트 완료: {', '.join(quest_names)}"
         
         return PredictionResponse(
             predictions=results,
@@ -304,7 +386,6 @@ async def predict_location(
 @app.post("/end_game/{session_id}")
 async def end_game(session_id: str):
     try:
-        # 트랜잭션 시작
         transaction = db.transaction()
         
         @firestore.transactional
@@ -321,22 +402,8 @@ async def end_game(session_id: str):
                 raise HTTPException(status_code=400, detail="이미 종료된 게임 세션입니다.")
             
             final_score = session_data['current_score']
-            user_id = session_data['user_id']
             
-            # 사용자 총점 업데이트
-            user_ref = db.collection(USERS_COLLECTION).document(user_id)
-            user = user_ref.get(transaction=transaction)
-            
-            if not user.exists:
-                raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
-            
-            current_total_score = user.to_dict().get('total_score', 0)
-            
-            transaction.update(user_ref, {
-                'total_score': current_total_score + final_score
-            })
-            
-            # 세션 종료
+            # 세션 종료 처리
             transaction.update(session_ref, {
                 'is_active': False,
                 'ended_at': firestore.SERVER_TIMESTAMP
@@ -366,25 +433,26 @@ async def get_rankings(limit: int = 10):
         rankings = []
         for rank, user in enumerate(users, 1):
             user_data = user.to_dict()
+            # ▼▼▼ [수정] 응답에 profile_image_url 필드 추가 ▼▼▼
             rankings.append({
                 "rank": rank,
                 "username": user_data['username'],
                 "total_score": user_data['total_score'],
-                "user_id": user_data['user_id']
+                "user_id": user_data['user_id'],
+                "profile_image_url": user_data.get('profile_image_url', '') # 필드가 없을 경우 대비
             })
         
         return RankingResponse(rankings=rankings)
         
     except Exception as e:
-        print(f"ERROR: 랭킹 조회 중 오류 발생: {e}") # 추가
-        traceback.print_exc() # 추가: 전체 오류 스택 출력
+        print(f"ERROR: 랭킹 조회 중 오류 발생: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # 사용자 프로필 조회
 @app.get("/user_profile/{user_id}", response_model=UserProfileResponse)
 async def get_user_profile(user_id: str):
     try:
-        # 사용자 정보 조회
         user_ref = db.collection(USERS_COLLECTION).document(user_id)
         user = user_ref.get()
         
@@ -393,7 +461,6 @@ async def get_user_profile(user_id: str):
         
         user_data = user.to_dict()
         
-        # 방문 히스토리 조회
         visits_ref = db.collection(VISITS_COLLECTION)
         visits = visits_ref.where('user_id', '==', user_id).order_by('visit_time', direction=firestore.Query.DESCENDING).get()
         
@@ -418,13 +485,11 @@ async def get_user_profile(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ▼▼▼ 신규 API 엔드포인트 추가 ▼▼▼
 @app.get("/places/", response_model=PlacesResponse)
 async def get_places():
     """서버에 설정된 모든 관광지의 이름과 좌표를 반환합니다."""
     try:
         places_data = []
-        # inferencer 인스턴스에 저장된 좌표를 가져옵니다.
         for name, (lat, lon) in inferencer.place_coords.items():
             places_data.append(Place(name=name, latitude=lat, longitude=lon))
         
@@ -432,29 +497,28 @@ async def get_places():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ▼▼▼ Flutter 웹 앱 서빙을 위한 핸들러 (파일의 맨 아래로 이동) ▼▼▼
-@app.get("/{path:path}")
-async def serve_spa(path: str):
-    """
-    Single Page Application(SPA) 라우팅을 위한 catch-all 핸들러입니다.
-    API 경로가 아니거나 static 파일이 아닌 모든 요청을 Flutter 앱으로 전달하여
-    클라이언트 사이드 라우팅이 정상적으로 동작하도록 합니다.
-    """
-    # 요청된 경로가 static 폴더에 파일로 존재하는지 확인
-    static_file_path = f"static/{path}"
-    if os.path.exists(static_file_path) and os.path.isfile(static_file_path):
-        return FileResponse(static_file_path)
-    
-    # 위 조건에 해당하지 않는 모든 경로는 Flutter 앱의 진입점으로 리디렉션
-    return FileResponse("static/index.html")
+# ==================== 퀘스트 시스템 엔드포인트 ====================
 
-@app.get("/")
-async def serve_frontend():
-    """Flutter 앱의 메인 페이지(index.html)를 서빙합니다."""
-    return FileResponse("static/index.html")
+# 일일 퀘스트 생성/조회
+@app.get("/quests/{user_id}")
+async def get_daily_quests(user_id: str):
+    """
+    사용자의 일일 퀘스트를 생성하거나 조회합니다.
+    - 이미 오늘의 퀘스트가 있으면 조회
+    - 없으면 새로 생성
+    """
+    try:
+        quests = generate_daily_quests(user_id)
+        return {
+            "user_id": user_id,
+            "quests": quests,
+            "message": "일일 퀘스트를 성공적으로 조회했습니다."
+        }
+    except Exception as e:
+        print(f"ERROR: 퀘스트 조회 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
-<<<<<<< HEAD
-=======
 # 퀘스트 진행 상황 조회
 @app.get("/quests/{user_id}/progress")
 async def get_quest_progress_endpoint(user_id: str):
@@ -582,7 +646,6 @@ async def create_quiz_quest_endpoint(request: QuizQuestCreateRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
->>>>>>> 5ae22db (Update quiz and visit quest code)
 
 if __name__ == "__main__":
     import uvicorn
@@ -606,7 +669,7 @@ if __name__ == "__main__":
             print(f"프로세스 종료 중 오류 발생: {e}")
         return False
     
-    PORT = int(os.environ.get("PORT", 8000))  # Cloud Run에서 환경변수로 포트 제공
+    PORT = 8000
     try:
         print(f"서버를 포트 {PORT}에서 시작합니다...")
         uvicorn.run(app, host="0.0.0.0", port=PORT)
@@ -622,4 +685,4 @@ if __name__ == "__main__":
                 sys.exit(1)
         else:
             print(f"서버 시작 중 오류 발생: {e}")
-            sys.exit(1) 
+            sys.exit(1)
