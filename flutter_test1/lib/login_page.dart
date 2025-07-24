@@ -1,9 +1,10 @@
-// login_page.dart
+// lib/login_page.dart
 
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // 사용자 취소 예외 처리를 위해 임포트
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
-// import 'main_page.dart'; // 더 이상 사용하지 않음
-import 'KakaoMapPage.dart'; // KakaoMapPage를 임포트
+import 'loading_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -14,35 +15,84 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
+  String? _errorMessage;
+
+  Future<bool> _checkConnectivity() async {
+    try {
+      final result = await InternetAddress.lookup('google.com');
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } on SocketException catch (_) {
+      return false;
+    }
+  }
 
   Future<void> _loginWithKakao(BuildContext context) async {
     if (_isLoading) return;
     setState(() {
       _isLoading = true;
+      _errorMessage = null;
     });
 
+    final isConnected = await _checkConnectivity();
+    if (!isConnected) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = '네트워크에 연결할 수 없습니다.\n인터넷 연결을 확인해주세요.';
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+
     try {
+      // 카카오톡이 설치되어 있는지 확인
       if (await isKakaoTalkInstalled()) {
-        await UserApi.instance.loginWithKakaoTalk();
+        try {
+          // 카카오톡 로그인 시도
+          await UserApi.instance.loginWithKakaoTalk();
+        } catch (error) {
+          // 카카오톡 로그인 실패 시 (계정 연결 안됨 등) 카카오계정 로그인으로 fallback
+          if (error is PlatformException &&
+              (error.code == 'NotSupportError' ||
+                  error.code == 'INVALID_REQUEST')) {
+            print('카카오톡 로그인 실패, 카카오계정 로그인으로 전환: ${error.message}');
+            await UserApi.instance.loginWithKakaoAccount();
+          } else {
+            // 다른 에러는 그대로 throw
+            rethrow;
+          }
+        }
       } else {
+        // 카카오톡이 설치되지 않은 경우 카카오계정 로그인
         await UserApi.instance.loginWithKakaoAccount();
       }
 
       User user = await UserApi.instance.me();
       if (!mounted) return;
 
-      // ▼▼▼ 수정된 부분 ▼▼▼
-      // MainPage 대신 KakaoMapPage로 사용자를 전달합니다.
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => KakaoMapPage(user: user)),
+        MaterialPageRoute(builder: (context) => LoadingPage(user: user)),
       );
-      // ▲▲▲ 수정된 부분 ▲▲▲
-    } catch (error) {
-      print('카카오 로그인 실패: $error');
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('로그인에 실패했습니다. 다시 시도해주세요.')));
+    } catch (error, stackTrace) {
+      print('카카오 로그인 에러');
+      print('Error: $error');
+      print('StackTrace: $stackTrace');
+
+      if (error is PlatformException && error.code == 'CANCELED') {
+        // 사용자가 취소한 경우
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _errorMessage = '로그인에 실패했습니다.\n잠시 후 다시 시도해주세요.';
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -52,21 +102,86 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  void _startAsGuest(BuildContext context) {
+  void _startAsGuest(BuildContext context) async {
     if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
-    // ▼▼▼ 추가된 부분 ▼▼▼
-    // 게스트용 MainPage.guest() 대신 KakaoMapPage.guest()를 사용합니다.
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (context) => const KakaoMapPage.guest()),
+    final isConnected = await _checkConnectivity();
+    if (!isConnected) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = '네트워크에 연결할 수 없습니다.\n인터넷 연결을 확인해주세요.';
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const LoadingPage.guest()),
+      );
+    }
+  }
+
+  Widget _buildErrorOverlay() {
+    return Container(
+      color: Colors.black.withOpacity(0.6),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          margin: const EdgeInsets.symmetric(horizontal: 40),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              const Text(
+                '로그인 오류',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _errorMessage!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 16, color: Colors.black87),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => setState(() => _errorMessage = null),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
+                ),
+                child: const Text('확인'),
+              )
+            ],
+          ),
+        ),
+      ),
     );
-    // ▲▲▲ 추가된 부분 ▲▲▲
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
+        alignment: Alignment.center,
         children: [
           Container(
             decoration: BoxDecoration(
@@ -122,9 +237,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                 const SizedBox(height: 20),
                 TextButton(
-                  // ▼▼▼ 수정된 부분 ▼▼▼
                   onPressed: () => _startAsGuest(context),
-                  // ▲▲▲ 수정된 부분 ▲▲▲
                   style: TextButton.styleFrom(
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
@@ -141,6 +254,7 @@ class _LoginPageState extends State<LoginPage> {
               ],
             ),
           ),
+          if (_errorMessage != null) _buildErrorOverlay(),
         ],
       ),
     );
