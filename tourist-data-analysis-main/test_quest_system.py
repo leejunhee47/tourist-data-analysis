@@ -49,9 +49,8 @@ def get_user_score(user_id):
         return 0
 
 def visit_place(user_id, target_place):
-    """특정 관광지를 방문하는 함수"""
+    """특정 관광지를 방문하는 함수 (방문지별로 맞는 이미지를 사용)"""
     print(f"\n📍 {target_place} 방문 시도...")
-    
     try:
         # 1. 게임 세션 시작
         session_data = {
@@ -59,57 +58,40 @@ def visit_place(user_id, target_place):
             "target_places": [target_place]
         }
         session_response = requests.post(f"{BASE_URL}/start_game/", json=session_data)
-        
         if session_response.status_code != 200:
             print(f"   ❌ 게임 세션 시작 실패: {session_response.text}")
             return False
-            
         session_info = session_response.json()
         session_id = session_info["session_id"]
-        
+
         # 2. 관광지 좌표 설정 (실제 좌표 사용)
         place_coordinates = {
+            "경복궁": (37.5796, 126.9770),
+            "경희궁": (37.5704, 126.9682),
             "광화문": (37.5725, 126.9768),
             "남산서울타워": (37.5511, 126.9882),
-            "독립문": (37.5725, 126.9595)
+            "북촌한옥마을": (37.5825, 126.9849),
+            "청계천": (37.56961, 127.0059),
+            "독립문": (37.5725, 126.9595),
+            "서울도서관": (37.5664, 126.9780)
         }
-        
         target_lat, target_lon = place_coordinates[target_place]
-        
-        # 3. 테스트용 이미지 파일 찾기
-        test_image_path = None
-        
-        # 먼저 관광지명으로 직접 찾기
-        possible_paths = [
-            f"query_images/{target_place}.jpg",
-            f"query_images/{target_place}.jpg",
-            f"query_images/{target_place}.jpg"
-        ]
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                test_image_path = path
-                break
-        
-        # 없으면 query_images 폴더에서 첫 번째 이미지 사용
-        if not test_image_path:
-            query_images_dir = "query_images"
-            if os.path.exists(query_images_dir):
-                image_files = [f for f in os.listdir(query_images_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
-                if image_files:
-                    test_image_path = os.path.join(query_images_dir, image_files[0])
-                    print(f"   📷 테스트 이미지 사용: {image_files[0]}")
-                else:
-                    print(f"   ❌ query_images 폴더에 이미지 파일이 없습니다.")
-                    return False
-            else:
-                print(f"   ❌ query_images 폴더를 찾을 수 없습니다.")
-                return False
-        
+
+        # 3. 관광지별 테스트 이미지 매핑
+        place_image_map = {
+            "경복궁": r"E:\Download\tourist-data-analysis-frontend-api (6)\tourist-data-analysis-frontend-api\tourist-data-analysis-main\query_images\경복궁_7_공공3유형.jpg",
+            "경희궁": r"E:\Download\tourist-data-analysis-frontend-api (6)\tourist-data-analysis-frontend-api\tourist-data-analysis-main\query_images\경희궁 흥화문_7_공공3유형.JPG",
+            "광화문": r"E:\Download\tourist-data-analysis-frontend-api (6)\tourist-data-analysis-frontend-api\tourist-data-analysis-main\query_images\광화문.jpg"
+        }
+        test_image_path = place_image_map.get(target_place, None)
+        if not test_image_path or not os.path.exists(test_image_path):
+            print(f"   ❌ 테스트 이미지 파일이 없습니다: {test_image_path}")
+            return False
+
         # 4. 방문 전 점수 확인
         before_score = get_user_score(user_id)
         print(f"   방문 전 점수: {before_score}점")
-        
+
         # 5. /predict/ 엔드포인트 호출
         with open(test_image_path, 'rb') as image_file:
             files = {'image': image_file}
@@ -119,21 +101,16 @@ def visit_place(user_id, target_place):
                 'latitude': target_lat,
                 'longitude': target_lon
             }
-            
             predict_response = requests.post(f"{BASE_URL}/predict/", files=files, data=data)
-            
             if predict_response.status_code == 200:
                 predict_result = predict_response.json()
                 if predict_result['is_correct']:
                     print(f"   ✅ 방문 성공!")
                     print(f"   획득 점수: +{predict_result['score_earned']}점")
-                    
-                    # 방문 후 점수 확인
                     time.sleep(1)  # 점수 업데이트 대기
                     after_score = get_user_score(user_id)
                     print(f"   방문 후 점수: {after_score}점")
                     print(f"   점수 변화: +{after_score - before_score}점")
-                    
                     return True
                 else:
                     print(f"   ❌ 방문 실패: {predict_result['message']}")
@@ -141,13 +118,12 @@ def visit_place(user_id, target_place):
             else:
                 print(f"   ❌ 방문 처리 실패: {predict_response.text}")
                 return False
-        
         # 6. 게임 세션 종료
         end_response = requests.post(f"{BASE_URL}/end_game/{session_id}")
-        
     except Exception as e:
         print(f"   ❌ 방문 처리 중 오류: {e}")
         return False
+
 
 def check_quest_completion(user_id, target_place):
     """특정 관광지 방문 후 퀘스트 완료 상태를 확인합니다."""
@@ -493,9 +469,103 @@ def test_daily_quiz_quests():
     print(f"\n🏁 최종 점수: {final_score}점 (보상 지급 퀘스트 수: {claimed_count}, 예상 점수: {claimed_count * 20}점)")
     print("\n=== 일일 퀴즈 퀘스트 테스트 종료 ===\n")
 
+
+def test_visit_count_quest():
+    """
+    방문 횟수 퀘스트(3곳 방문 시 클리어) 테스트 함수
+    QUEST_README.md의 방문 횟수 퀘스트 가이드 6단계 순서대로 동작을 검증한다.
+    경복궁, 경희궁, 광화문을 방문했다고 가정하여 테스트한다.
+    """
+    print("\n=== 방문 횟수 퀘스트 테스트 시작 ===\n")
+    # 1. 테스트 사용자 생성
+    user_id = create_test_user()
+    if not user_id:
+        print("❌ 테스트 사용자 생성 실패")
+        return
+
+    # 1. 일일 퀘스트 생성 시 방문 횟수 퀘스트 1개가 자동으로 생성된다.
+    response = requests.get(f"{BASE_URL}/quests/{user_id}")
+    if response.status_code != 200:
+        print(f"❌ 퀘스트 목록 조회 실패: {response.text}")
+        return
+    quests = response.json()["quests"]
+    visit_count_quest = next((q for q in quests if q["type"] == "visit_count"), None)
+    if not visit_count_quest:
+        print("❌ 방문 횟수 퀘스트가 생성되지 않았습니다.")
+        return
+    print(f"[1단계] 방문 횟수 퀘스트 생성 확인: {visit_count_quest['quest_id']}")
+
+    # 2. 경복궁, 경희궁, 광화문을 순서대로 방문
+    fixed_places = ["경복궁", "경희궁", "광화문"]
+    visited_places = []
+    visit_success = 0
+    for place in fixed_places:
+        if visit_place(user_id, place):
+            visited_places.append(place)
+            visit_success += 1
+            print(f"[2단계] {place} 방문 성공 ({visit_success}/3)")
+        else:
+            print(f"❌ {place} 방문 실패")
+
+    # 3. 각 방문마다 check_quest_completion 함수가 호출되어 방문 횟수가 업데이트된다.
+    response = requests.get(f"{BASE_URL}/quests/{user_id}")
+    if response.status_code == 200:
+        quests_status = response.json()["quests"]
+        my_quest = next((q for q in quests_status if q["quest_id"] == visit_count_quest["quest_id"]), None)
+        if my_quest:
+            print(f"[3단계] 방문 목록: {my_quest['completed_places']}, 현재 방문 수: {my_quest['current_visit_count']}")
+
+    # 4. 3곳 방문 완료 시 퀘스트 상태가 'active'에서 'reward_ready'로 변경된다.
+    response = requests.get(f"{BASE_URL}/quests/{user_id}")
+    if response.status_code == 200:
+        quests_status = response.json()["quests"]
+        my_quest = next((q for q in quests_status if q["quest_id"] == visit_count_quest["quest_id"]), None)
+        if my_quest and my_quest["status"] == "reward_ready":
+            print(f"[4단계] 퀘스트 상태: {my_quest['status']} (3곳 방문 완료)")
+        else:
+            print(f"❌ 퀘스트가 reward_ready 상태가 아닙니다. 현재 상태: {my_quest['status'] if my_quest else 'N/A'}")
+    else:
+        print("❌ 퀘스트 상태 조회 실패")
+
+    # 5. reward_ready 상태에서 /quests/reward 엔드포인트를 호출하면 상태가 'reward_claimed'로 변경되고, 사용자 total_score에 30점이 누적된다.
+    if my_quest and my_quest["status"] == "reward_ready":
+        reward_data = {
+            "user_id": user_id,
+            "quest_id": my_quest["quest_id"]
+        }
+        reward_response = requests.post(f"{BASE_URL}/quests/reward", json=reward_data)
+        if reward_response.status_code == 200:
+            print("[5단계] 보상 지급 완료!")
+        else:
+            print(f"❌ 보상 지급 실패: {reward_response.text}")
+        # 상태 재확인
+        response = requests.get(f"{BASE_URL}/quests/{user_id}")
+        if response.status_code == 200:
+            quests_status = response.json()["quests"]
+            my_quest = next((q for q in quests_status if q["quest_id"] == visit_count_quest["quest_id"]), None)
+            if my_quest:
+                print(f"[5단계] 보상 지급 후 상태: {my_quest['status']}")
+    else:
+        print("❌ reward_ready 상태가 아니어서 보상 지급을 건너뜀")
+
+    # 6. 중복 방문은 카운트되지 않으며, 오늘 방문한 관광지 목록이 completed_places에 저장된다.
+    response = requests.get(f"{BASE_URL}/quests/{user_id}")
+    if response.status_code == 200:
+        quests_status = response.json()["quests"]
+        my_quest = next((q for q in quests_status if q["quest_id"] == visit_count_quest["quest_id"]), None)
+        if my_quest:
+            print(f"[6단계] 최종 방문 목록(completed_places): {my_quest['completed_places']}")
+            print(f"[6단계] 방문 수(중복 제외): {len(my_quest['completed_places'])}")
+    # 최종 점수 확인
+    final_score = get_user_score(user_id)
+    print(f"\n🏁 최종 점수: {final_score}점 (예상: 30점)")
+    print(f"방문한 관광지(고정): {visited_places}")
+    print("\n=== 방문 횟수 퀘스트 테스트 종료 ===\n")
+
 if __name__ == "__main__":
     try:
-        test_daily_quiz_quests()
+        test_visit_count_quest()
+        # test_daily_quiz_quests()
         # test_theme_quest_clear()
     except requests.exceptions.ConnectionError:
         print("❌ API 서버에 연결할 수 없습니다.")

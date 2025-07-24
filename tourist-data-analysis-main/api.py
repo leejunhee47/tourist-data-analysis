@@ -17,7 +17,7 @@ from quest_system import (
     claim_quest_reward, 
     update_quest_status_only,
     get_quest_progress,
-    create_history_quiz_quests  # 수정: 여러 퀴즈 퀘스트 생성 함수로 변경
+    create_history_quiz_quests  # 복수형 함수 import
 )
 from fastapi.staticfiles import StaticFiles
 
@@ -653,6 +653,7 @@ async def create_quiz_quest_endpoint(request: QuizQuestCreateRequest):
         return {"quests": saved_quests, "message": "퀴즈 퀘스트 3개가 성공적으로 생성되었습니다."}
     except Exception as e:
         print(f"ERROR: 퀴즈 퀘스트 생성 중 오류 발생: {e}")
+        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
