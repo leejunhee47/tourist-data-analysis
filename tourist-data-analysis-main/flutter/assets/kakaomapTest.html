@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>내 위치 찾기</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+      }
+      #map {
+        width: 100%;
+        height: 100vh;
+        position: relative;
+      }
+
+      .current-location-label {
+        background: #ff4444;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: bold;
+        white-space: nowrap;
+        box-shadow: 0 2px 8px rgba(255, 68, 68, 0.3);
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0% {
+          transform: scale(1);
+          box-shadow: 0 2px 8px rgba(255, 68, 68, 0.3);
+        }
+        50% {
+          transform: scale(1.05);
+          box-shadow: 0 4px 12px rgba(255, 68, 68, 0.5);
+        }
+        100% {
+          transform: scale(1);
+          box-shadow: 0 2px 8px rgba(255, 68, 68, 0.3);
+        }
+      }
+
+      .location-info-window {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        padding: 16px;
+        min-width: 200px;
+        text-align: center;
+      }
+
+      .location-title {
+        font-weight: bold;
+        font-size: 16px;
+        color: #ff4444;
+        margin-bottom: 8px;
+      }
+
+      .location-details {
+        font-size: 12px;
+        color: #666;
+        line-height: 1.4;
+      }
+
+      .loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(255, 255, 255, 0.95);
+        padding: 24px;
+        border-radius: 12px;
+        text-align: center;
+        z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+
+      .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #ff4444;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 16px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map">
+      <div id="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <div>지도를 불러오는 중...</div>
+      </div>
+    </div>
+
+    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=aa68c996a365f43a8153e7d4cee31250&libraries=services"></script>
+    <script>
+      let map;
+      let currentLocationMarker = null;
+      let currentLocationOverlay = null;
+      let infowindow = null;
+
+      // 지도 초기화 함수
+      function initializeMap() {
+        try {
+          console.log("지도 초기화 시작");
+
+          var container = document.getElementById("map");
+          var options = {
+            center: new kakao.maps.LatLng(37.5665, 126.978), // 서울 시청
+            level: 8,
+          };
+
+          map = new kakao.maps.Map(container, options);
+
+          // 로딩 표시 제거
+          const loadingElement = document.getElementById("loading");
+          if (loadingElement) {
+            loadingElement.style.display = "none";
+          }
+
+          console.log("카카오맵 초기화 완료");
+
+          // 지도 타일 로드 완료 이벤트
+          kakao.maps.event.addListener(map, "tilesloaded", function () {
+            console.log("지도 타일 로드 완료");
+          });
+
+          // 지도 클릭 시 인포윈도우 닫기
+          kakao.maps.event.addListener(map, "click", function () {
+            if (infowindow) {
+              infowindow.close();
+            }
+          });
+        } catch (error) {
+          console.error("지도 초기화 오류:", error);
+          const loadingElement = document.getElementById("loading");
+          if (loadingElement) {
+            loadingElement.innerHTML = "지도 로드 실패: " + error.message;
+          }
+        }
+      }
+
+      // 카카오맵 SDK 로드 후 초기화
+      if (typeof kakao !== "undefined" && kakao.maps) {
+        console.log("카카오맵 SDK 이미 로드됨");
+        initializeMap();
+      } else {
+        console.log("카카오맵 SDK 로드 대기 중");
+
+        function waitForKakao() {
+          if (typeof kakao !== "undefined" && kakao.maps) {
+            initializeMap();
+          } else {
+            setTimeout(waitForKakao, 100);
+          }
+        }
+
+        waitForKakao();
+      }
+
+      // 현재 위치 마커 추가 (기본 빨간색 마커 사용)
+      function addCurrentLocationMarker(lat, lng) {
+        try {
+          console.log("현재 위치 마커 추가 시도:", lat, lng);
+
+          if (!map) {
+            console.error("지도가 초기화되지 않음");
+            return;
+          }
+
+          const position = new kakao.maps.LatLng(lat, lng);
+
+          // 기존 현재 위치 마커 제거
+          if (currentLocationMarker) {
+            currentLocationMarker.setMap(null);
+          }
+          if (currentLocationOverlay) {
+            currentLocationOverlay.setMap(null);
+          }
+
+          // 카카오맵 기본 빨간색 마커 사용 (이미지 지정 없음)
+          currentLocationMarker = new kakao.maps.Marker({
+            position: position,
+            map: map,
+          });
+
+          // 현재 위치 라벨 (빨간색 테마로 변경)
+          currentLocationOverlay = new kakao.maps.CustomOverlay({
+            position: position,
+            content: '<div class="current-location-label">내 위치</div>',
+            yAnchor: 2.5,
+          });
+
+          currentLocationOverlay.setMap(map);
+
+          // 마커 클릭 이벤트 - 상세 정보 표시
+          kakao.maps.event.addListener(
+            currentLocationMarker,
+            "click",
+            function () {
+              showCurrentLocationInfo(position, lat, lng);
+            }
+          );
+
+          // 지도 중심을 현재 위치로 부드럽게 이동
+          map.panTo(position);
+
+          // 줌 레벨 조정
+          setTimeout(() => {
+            map.setLevel(5);
+          }, 800);
+
+          console.log("현재 위치 마커 추가 완료:", lat, lng);
+
+          // 성공 메시지를 위한 임시 오버레이
+          showSuccessMessage(position);
+
+          // Flutter로 성공 메시지 전송
+          if (window.FlutterChannel) {
+            window.FlutterChannel.postMessage(
+              "마커 추가 성공: " + lat + ", " + lng
+            );
+          }
+        } catch (error) {
+          console.error("현재 위치 마커 추가 오류:", error);
+          // Flutter로 에러 메시지 전송
+          if (window.FlutterChannel) {
+            window.FlutterChannel.postMessage(
+              "마커 추가 오류: " + error.message
+            );
+          }
+        }
+      }
+
+      // 현재 위치 정보창 표시
+      function showCurrentLocationInfo(position, lat, lng) {
+        if (infowindow) {
+          infowindow.close();
+        }
+
+        const content = `
+          <div class="location-info-window">
+            <div class="location-title">🎯 현재 위치</div>
+            <div class="location-details">
+              <div><strong>위도:</strong> ${lat.toFixed(6)}</div>
+              <div><strong>경도:</strong> ${lng.toFixed(6)}</div>
+              <div style="margin-top: 8px; color: #ff4444; font-size: 11px;">
+                📍 정확한 위치가 표시되었습니다
+              </div>
+            </div>
+          </div>
+        `;
+
+        infowindow = new kakao.maps.InfoWindow({
+          content: content,
+          removable: true,
+        });
+
+        infowindow.open(map, currentLocationMarker);
+      }
+
+      // 성공 메시지 표시
+      function showSuccessMessage(position) {
+        const successOverlay = new kakao.maps.CustomOverlay({
+          position: position,
+          content: `
+            <div style="
+              background: rgba(255, 68, 68, 0.9);
+              color: white;
+              padding: 8px 16px;
+              border-radius: 20px;
+              font-size: 12px;
+              font-weight: bold;
+              text-align: center;
+              animation: fadeInOut 3s ease-in-out;
+            ">
+              ✅ 위치를 찾았습니다!
+            </div>
+            <style>
+              @keyframes fadeInOut {
+                0% { opacity: 0; transform: translateY(-10px); }
+                20% { opacity: 1; transform: translateY(0); }
+                80% { opacity: 1; transform: translateY(0); }
+                100% { opacity: 0; transform: translateY(-10px); }
+              }
+            </style>
+          `,
+          yAnchor: 4,
+        });
+
+        successOverlay.setMap(map);
+
+        // 3초 후 제거
+        setTimeout(() => {
+          successOverlay.setMap(null);
+        }, 3000);
+      }
+
+      // 전역 함수 노출
+      window.addCurrentLocationMarker = addCurrentLocationMarker;
+
+      // 디버그용 - 지도 준비 완료 시 Flutter에 알림
+      window.addEventListener("load", function () {
+        console.log("HTML 페이지 로드 완료");
+        if (window.FlutterChannel) {
+          window.FlutterChannel.postMessage("HTML 페이지 로드 완료");
+        }
+      });
+    </script>
+  </body>
+</html>

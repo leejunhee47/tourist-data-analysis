@@ -1,0 +1,6 @@
+---
+description: 퀘스트 관련 작업
+alwaysApply: false
+---
+- 퀘스트에 대한 함수를 생성할 때 quest_system.py에 생성한다.
+- test_quest_system.py에 코드를 생성할 땐 quest_system.py 함수를 최대한 활용한다.
