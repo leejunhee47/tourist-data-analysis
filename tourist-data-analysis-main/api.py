@@ -16,7 +16,8 @@ from quest_system import (
     submit_quiz_answer, 
     claim_quest_reward, 
     update_quest_status_only,
-    get_quest_progress
+    get_quest_progress,
+    create_history_quiz_quests  # 복수형 함수 import
 )
 from fastapi.staticfiles import StaticFiles
 
@@ -88,6 +89,9 @@ class QuizAnswerRequest(BaseModel):
     user_id: str
     quest_id: str
     answer_index: int
+
+class QuizQuestCreateRequest(BaseModel):
+    user_id: str
 
 # 사용자 생성
 @app.post("/create_user/")
@@ -610,6 +614,36 @@ async def update_quest_status_only_endpoint(reward_data: QuestRewardRequest):
         }
     except Exception as e:
         print(f"ERROR: 퀘스트 상태 변경 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== 퀴즈 퀘스트 생성 엔드포인트 ====================
+@app.post("/quests/quiz")
+async def create_quiz_quest_endpoint(request: QuizQuestCreateRequest):
+    """
+    랜덤 관광지 퀴즈 퀘스트 3개를 생성하여 반환합니다.
+    - user_id를 받아 create_history_quiz_quests 함수로 퀘스트 3개 생성
+    - Firestore에 각각 저장 후, 다시 읽어와 리스트로 반환
+    """
+    try:
+        user_id = request.user_id
+        # 퀴즈 퀘스트 3개 생성
+        quiz_quests = create_history_quiz_quests(user_id)
+        db = initialize_firebase()
+        if not db:
+            raise Exception("Firebase 데이터베이스 연결에 실패했습니다.")
+        quests_ref = db.collection("daily_quests")
+        saved_quests = []
+        for quest_data in quiz_quests:
+            quests_ref.document(quest_data['quest_id']).set(quest_data)
+            # 저장 후 다시 읽어서 리스트에 추가
+            quest_doc = quests_ref.document(quest_data['quest_id']).get()
+            if quest_doc.exists:
+                saved_quests.append(quest_doc.to_dict())
+        return {"quests": saved_quests, "message": "퀴즈 퀘스트 3개가 성공적으로 생성되었습니다."}
+    except Exception as e:
+        print(f"ERROR: 퀴즈 퀘스트 생성 중 오류 발생: {e}")
+        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -2,13 +2,16 @@ import torch
 import clip
 from PIL import Image
 import os
+from pathlib import Path
 from tqdm import tqdm
 from clip_lora_finetuning import LoRACLIP, LoRALayer  # LoRA 모델 클래스 import
 import numpy as np
 from math import radians, sin, cos, sqrt, atan2
 
+current_dir = Path(__file__).parent
+
 class CLIPLoRAInference:
-    def __init__(self, model_path="fine_tuned_model/new_best_model.pth"):
+    def __init__(self, model_path = current_dir / "saved_models" / "new_best_model.pth"):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"🚀 장치: {self.device}")
         
@@ -62,7 +65,7 @@ class CLIPLoRAInference:
             rank=checkpoint.get('rank', 8),
             alpha=checkpoint.get('alpha', 16)
         ).to(self.device)
-        
+
         # LoRA 가중치 로드
         self.model.load_state_dict(checkpoint['lora_state_dict'], strict=False)
         self.model.eval()
@@ -120,13 +123,13 @@ class CLIPLoRAInference:
                 
                 # 결과 저장을 위한 리스트
                 results = []
-                
+
                 # 각 장소별 결과 계산
                 for idx, (place_kor, place_eng) in enumerate(self.place_mapping.items()):
                     confidence = float(similarity[0][idx]) * 100
                     place_coord = self.place_coords[place_kor]
                     distance = None
-                    
+
                     if user_lat is not None and user_lon is not None:
                         distance = self.calculate_distance(
                             user_lat, user_lon, 

@@ -3,7 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <title>내 위치 찾기</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, user-scalable=yes"
+    />
     <style>
       html,
       body {
@@ -18,93 +21,37 @@
         height: 100vh;
         position: relative;
       }
-
-      /* 새로운 CSS: 중앙에 고정된 빨간색 점 */
       .current-location-dot {
-        width: 12px; /* 카카오맵 앱처럼 더 작은 점 */
-        height: 12px; /* 카카오맵 앱처럼 더 작은 점 */
-        background-color: #ff4444; /* 빨간색 */
-        border-radius: 50%; /* 원 형태로 만들기 */
-        position: absolute; /* CustomOverlay 내부에서 absolute로 위치 지정 */
-        transform: translate(-50%, -50%); /* 중심을 정확히 위치에 맞춤 */
-        z-index: 5; /* 펄스 효과 위에 표시되도록 */
-        border: 3px solid white; /* 흰색 테두리 추가 */
-      }
-
-      /* 새로운 CSS: 주변으로 퍼져나가는 펄스 효과 */
-      .current-location-pulse {
-        width: 25px; /* 초기 펄스 크기 (점보다 약간 크게) */
-        height: 25px; /* 초기 펄스 크기 (점보다 약간 크게) */
-        background-color: rgba(68, 127, 255, 0.7); /* 반투명 파란색 */
+        width: 12px;
+        height: 12px;
+        background-color: #ff4444;
         border-radius: 50%;
         position: absolute;
         transform: translate(-50%, -50%);
-        box-shadow: 0 0 0 rgba(68, 127, 255, 0.7); /* 초기 그림자 (선택 사항) */
-        animation: pulse-animation 1.5s infinite ease-out; /* 펄스 애니메이션 적용 */
-        z-index: 4; /* 점 아래에 표시되도록 */
+        z-index: 5;
+        border: 3px solid white;
       }
-
+      .current-location-pulse {
+        width: 25px;
+        height: 25px;
+        background-color: rgba(68, 127, 255, 0.7);
+        border-radius: 50%;
+        position: absolute;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 0 0 rgba(68, 127, 255, 0.7);
+        animation: pulse-animation 1.5s infinite ease-out;
+        z-index: 4;
+      }
       @keyframes pulse-animation {
         0% {
           transform: translate(-50%, -50%) scale(0.8);
           opacity: 0.7;
         }
         100% {
-          transform: translate(-50%, -50%) scale(2.5); /* 더 크게 퍼지도록 */
-          opacity: 0; /* 완전히 사라지도록 */
+          transform: translate(-50%, -50%) scale(2.5);
+          opacity: 0;
         }
       }
-
-      /* 기존 .current-location-label은 더 이상 사용하지 않지만, 파일 내에서 제거하지 않았습니다. */
-      .current-location-label {
-        background: #ff4444;
-        color: white;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: bold;
-        white-space: nowrap;
-        box-shadow: 0 2px 8px rgba(255, 68, 68, 0.3);
-        animation: pulse 2s infinite;
-      }
-
-      @keyframes pulse {
-        0% {
-          transform: scale(1);
-          box-shadow: 0 2px 8px rgba(255, 68, 68, 0.3);
-        }
-        50% {
-          transform: scale(1.05);
-          box-shadow: 0 4px 12px rgba(255, 68, 68, 0.5);
-        }
-        100% {
-          transform: scale(1);
-          box-shadow: 0 2px 8px rgba(255, 68, 68, 0.3);
-        }
-      }
-
-      .location-info-window {
-        background: white;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        padding: 16px;
-        min-width: 200px;
-        text-align: center;
-      }
-
-      .location-title {
-        font-weight: bold;
-        font-size: 16px;
-        color: #ff4444;
-        margin-bottom: 8px;
-      }
-
-      .location-details {
-        font-size: 12px;
-        color: #666;
-        line-height: 1.4;
-      }
-
       .loading {
         position: absolute;
         top: 50%;
@@ -117,7 +64,6 @@
         z-index: 1000;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
       }
-
       .loading-spinner {
         width: 40px;
         height: 40px;
@@ -127,7 +73,6 @@
         animation: spin 1s linear infinite;
         margin: 0 auto 16px;
       }
-
       @keyframes spin {
         0% {
           transform: rotate(0deg);
@@ -148,7 +93,7 @@
 
     <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=aa68c996a365f43a8153e7d4cee31250&libraries=services"></script>
     <script>
-      // ▼▼▼ 1. 서울시 좌표 데이터 추가 ▼▼▼
+      // 서울시 경계 좌표 데이터
       const seoulCoordinates = [
         new kakao.maps.LatLng(37.4666439205858, 127.12448814562413),
         new kakao.maps.LatLng(37.466520884451874, 127.1242069321964),
@@ -353,495 +298,266 @@
       ];
 
       let map;
-      let currentLocationMarker = null;
-      let currentLocationCustomOverlay = null; // 'currentLocationOverlay' 대신 'currentLocationCustomOverlay' 사용
-      let infowindow = null;
-      let allMarkers = [];
+      let currentLocationCustomOverlay = null;
       let allOverlays = [];
-
-      // ▼▼▼ 추가된 함수 ▼▼▼
-      // 이전에 하이라이트된 마커의 ID와 타이머를 저장할 변수
+      let missionTextOverlay = null;
       let highlightedContentId = null;
-      let highlightTimeout = null;
 
-      // 모든 마커의 테두리를 초기화하는 함수 (더 이상 highlightMarker에서 사용하지 않음)
+      /**
+       * 모든 마커의 테두리를 원래 상태로 되돌리는 함수.
+       */
       function resetAllMarkerBorders() {
         const overlays = document.getElementsByClassName("photo-overlay");
         for (let i = 0; i < overlays.length; i++) {
-          overlays[i].style.borderColor = "#fff";
+          const isVisited = overlays[i].getAttribute("data-visited") === "true";
+          overlays[i].style.borderColor = isVisited ? "#2b92ec" : "#fff"; // 방문했다면 파란색, 아니면 흰색
           overlays[i].style.borderWidth = "3px";
         }
         highlightedContentId = null;
-        if (highlightTimeout) {
-          clearTimeout(highlightTimeout);
-          highlightTimeout = null;
-        }
+        console.log("모든 마커 테두리 초기화 완료");
       }
 
-      // [수정됨] 특정 마커를 하이라이트하는 함수 (성능 개선 버전)
+      /**
+       * 특정 마커에 빨간색 테두리를 표시하여 하이라이트하는 함수.
+       */
       function highlightMarker(contentId) {
-        // 1. 기존에 설정된 하이라이트 자동 제거 타이머가 있다면 즉시 취소
-        if (highlightTimeout) {
-          clearTimeout(highlightTimeout);
-        }
-
-        // 2. 이전에 하이라이트된 마커가 있다면 즉시 원래 상태로 복원
         if (highlightedContentId && highlightedContentId !== contentId) {
           const prevOverlay = document.getElementById(
             `photo-overlay-${highlightedContentId}`
           );
           if (prevOverlay) {
-            prevOverlay.style.borderColor = "#fff";
+            const isVisited =
+              prevOverlay.getAttribute("data-visited") === "true";
+            prevOverlay.style.borderColor = isVisited ? "#2b92ec" : "#fff";
             prevOverlay.style.borderWidth = "3px";
           }
         }
 
-        // 3. 새로운 마커를 찾아 하이라이트
         const targetOverlay = document.getElementById(
           `photo-overlay-${contentId}`
         );
         if (targetOverlay) {
           targetOverlay.style.borderColor = "#ff4444"; // 빨간색
-          targetOverlay.style.borderWidth = "4px"; // 약간 더 두껍게
+          targetOverlay.style.borderWidth = "4px";
           console.log(`마커 하이라이트: ${contentId}`);
-
-          // 4. 현재 하이라이트된 마커 ID를 저장
           highlightedContentId = contentId;
-
-          // 5. 3초 후에 하이라이트를 자동으로 제거하는 타이머 설정
-          highlightTimeout = setTimeout(() => {
-            targetOverlay.style.borderColor = "#fff"; // 원래 흰색 테두리로
-            targetOverlay.style.borderWidth = "3px"; // 원래 두께로
-            console.log(`마커 하이라이트 자동 제거: ${contentId}`);
-
-            // 타이머가 실행되었으므로 ID와 타이머 참조를 초기화
-            highlightedContentId = null;
-            highlightTimeout = null;
-          }, 3000);
         } else {
           console.error(`하이라이트할 마커를 찾지 못했습니다: ${contentId}`);
         }
       }
-      // ▲▲▲ 수정/추가 영역 끝 ▲▲▲
 
-      // ▼▼▼ 2. 서울시 영역을 표시하는 폴리곤 생성 함수 추가 ▼▼▼
+      /**
+       * 서울시 경계 폴리곤을 지도에 표시하는 함수
+       */
       function displaySeoulArea(map, coordinates) {
-        // 지도를 덮을 사각형 영역을 정의합니다. (좌상단, 우하단)
         const outerPath = [
           new kakao.maps.LatLng(40, 124),
           new kakao.maps.LatLng(40, 132),
           new kakao.maps.LatLng(33, 132),
           new kakao.maps.LatLng(33, 124),
         ];
-
-        // 서울시 영역을 구멍으로 하는 폴리곤을 생성합니다.
-        // 첫 번째 배열은 외부 영역, 두 번째 배열은 구멍(서울)이 됩니다.
         const polygon = new kakao.maps.Polygon({
           path: [outerPath, coordinates],
           strokeWeight: 2,
-          strokeColor: "#004c80", // 테두리 색상
+          strokeColor: "#004c80",
           strokeOpacity: 0.8,
-          fillColor: "#000000", // 외부 마스킹 색상
-          fillOpacity: 0.3, // 외부 마스킹 투명도
+          fillColor: "#000000",
+          fillOpacity: 0.3,
         });
-
-        // 폴리곤을 지도에 표시합니다.
         polygon.setMap(map);
       }
 
-      // 지도 초기화 함수
       function initializeMap() {
         try {
           console.log("지도 초기화 시작");
-          var container = document.getElementById("map");
-          var options = {
-            center: new kakao.maps.LatLng(37.5665, 126.978), // 서울 시청
+          const container = document.getElementById("map");
+          const options = {
+            center: new kakao.maps.LatLng(37.5665, 126.978),
             level: 8,
             maxLevel: 12,
           };
           map = new kakao.maps.Map(container, options);
 
-          // ▼▼▼ 3. 여기서 함수 호출 ▼▼▼
+          // 서울시 경계 폴리곤 표시 함수 호출
           displaySeoulArea(map, seoulCoordinates);
 
-          // 로딩 표시 제거
           const loadingElement = document.getElementById("loading");
-          if (loadingElement) {
-            loadingElement.style.display = "none";
-          }
-
+          if (loadingElement) loadingElement.style.display = "none";
           console.log("카카오맵 초기화 완료");
-          // 지도 타일 로드 완료 이벤트
-          kakao.maps.event.addListener(map, "tilesloaded", function () {
-            console.log("지도 타일 로드 완료");
-          });
-          // 지도 클릭 시 인포윈도우 닫기
-          kakao.maps.event.addListener(map, "click", function () {
-            if (infowindow) {
-              infowindow.close();
-            }
-          });
         } catch (error) {
           console.error("지도 초기화 오류:", error);
           const loadingElement = document.getElementById("loading");
-          if (loadingElement) {
+          if (loadingElement)
             loadingElement.innerHTML = "지도 로드 실패: " + error.message;
-          }
         }
       }
 
-      // 모든 마커와 오버레이를 제거하는 함수 추가
       function clearAllMarkers() {
         try {
-          console.log("모든 마커 제거 시작");
-          // 현재 위치 마커 제거 (사용하지 않으므로 무의미하지만, 혹시 몰라 유지)
-          if (currentLocationMarker) {
-            currentLocationMarker.setMap(null);
-            currentLocationMarker = null;
-          }
-
-          // 현재 위치 커스텀 오버레이 제거
           if (currentLocationCustomOverlay) {
             currentLocationCustomOverlay.setMap(null);
             currentLocationCustomOverlay = null;
           }
-
-          // 인포윈도우 제거
-          if (infowindow) {
-            infowindow.close();
-            infowindow = null;
+          if (missionTextOverlay) {
+            missionTextOverlay.setMap(null);
+            missionTextOverlay = null;
           }
-
-          // 모든 마커 제거
-          for (let i = 0; i < allMarkers.length; i++) {
-            allMarkers[i].setMap(null);
-          }
-          allMarkers = [];
-          // 모든 오버레이 제거
           for (let i = 0; i < allOverlays.length; i++) {
             allOverlays[i].setMap(null);
           }
           allOverlays = [];
-
-          console.log("모든 마커 제거 완료");
         } catch (error) {
           console.error("마커 제거 중 오류:", error);
         }
       }
 
-      // 카카오맵 SDK 로드 후 초기화
       if (typeof kakao !== "undefined" && kakao.maps) {
-        console.log("카카오맵 SDK 이미 로드됨");
-        initializeMap();
-      } else {
-        console.log("카카오맵 SDK 로드 대기 중");
-        function waitForKakao() {
-          if (typeof kakao !== "undefined" && kakao.maps) {
-            initializeMap();
-          } else {
-            setTimeout(waitForKakao, 100);
-          }
-        }
-
-        waitForKakao();
+        kakao.maps.load(initializeMap);
       }
 
-      // 현재 위치 마커 추가 (빨간색 원과 펄스 효과로 변경)
       function addCurrentLocationMarker(lat, lng, autoMove = true) {
-        console.log("Adding current location marker:", lat, lng);
         try {
-          if (!map) {
-            console.error("지도가 초기화되지 않음");
-            return;
-          }
-
-          // 기존 마커와 커스텀 오버레이 제거
-          if (currentLocationMarker) {
-            currentLocationMarker.setMap(null);
-            currentLocationMarker = null;
-          }
-          if (currentLocationCustomOverlay) {
+          if (!map) return;
+          if (currentLocationCustomOverlay)
             currentLocationCustomOverlay.setMap(null);
-            currentLocationCustomOverlay = null;
-          }
-
           const locPosition = new kakao.maps.LatLng(lat, lng);
-
-          // 새로운 빨간색 고정 점과 주변 펄스 효과를 포함하는 커스텀 오버레이 생성
-          const content = `
-            <div style="position: relative; width: 24px; height: 24px;"> <div class="current-location-pulse"></div>
-              <div class="current-location-dot"></div>
-            </div>
-          `;
-
+          const content = `<div style="position: relative; width: 24px; height: 24px; pointer-events: none;"><div class="current-location-pulse"></div><div class="current-location-dot"></div></div>`;
           currentLocationCustomOverlay = new kakao.maps.CustomOverlay({
             position: locPosition,
             content: content,
-            yAnchor: 0.5, // 중심을 정확히 위치에 맞춤
-            xAnchor: 0.5, // 중심을 정확히 위치에 맞춤
-            zIndex: 3, // 다른 요소 위에 표시되도록 z-index 설정
+            yAnchor: 0.5,
+            xAnchor: 0.5,
+            zIndex: 1000,
           });
-
           currentLocationCustomOverlay.setMap(map);
-
           if (autoMove) {
             map.panTo(locPosition);
             setTimeout(() => {
               map.setLevel(5);
             }, 800);
-            showSuccessMessage(locPosition);
-          }
-
-          console.log(
-            "현재 위치 마커 (빨간색 점 + 펄스) 추가 및 지도 중심 설정 완료"
-          );
-
-          // Flutter로 성공 메시지 전송
-          if (window.FlutterChannel) {
-            window.FlutterChannel.postMessage(
-              "마커 추가 성공: " + lat + ", " + lng
-            );
           }
         } catch (error) {
           console.error("현재 위치 마커 추가 중 오류 발생:", error);
-          // Flutter로 에러 메시지 전송
-          if (window.FlutterChannel) {
-            window.FlutterChannel.postMessage(
-              "마커 추가 오류: " + error.message
-            );
-          }
         }
       }
 
-      // 현재 위치 정보창 표시 (빨간색 원에서는 마커 클릭 이벤트를 직접 받을 수 없으므로, 필요시 다른 방식으로 호출)
-      function showCurrentLocationInfo(position, lat, lng) {
-        if (infowindow) {
-          infowindow.close();
-        }
-
-        const content = `
-          <div class="location-info-window">
-            <div class="location-title">🎯 현재 위치</div>
-            <div class="location-details">
-              <div><strong>위도:</strong> ${lat.toFixed(6)}</div>
-              <div><strong>경도:</strong> ${lng.toFixed(6)}</div>
-              <div style="margin-top: 8px; color: #ff4444; font-size: 11px;">
-                📍 정확한 위치가 표시되었습니다
-              </div>
-            </div>
-          </div>
-        `;
-        infowindow = new kakao.maps.InfoWindow({
-          content: content,
-          removable: true,
-        });
-        // 현재 위치 원에는 마커 객체가 없으므로, position으로 인포윈도우를 엽니다.
-        infowindow.open(map, currentLocationCustomOverlay.getPosition());
-      }
-
-      // 성공 메시지 표시
-      function showSuccessMessage(position) {
-        const successOverlay = new kakao.maps.CustomOverlay({
-          position: position,
-          content: `
-            <div style="
-              background: rgba(255, 68, 68, 0.9);
-              color: white;
-              padding: 8px 16px;
-              border-radius: 20px;
-              font-size: 12px;
-              font-weight: bold;
-              text-align: center;
-              animation: fadeInOut 3s ease-in-out;
-            ">
-              내 위치를 찾았습니다!
-            </div>
-            <style>
-              @keyframes fadeInOut {
-                0% { opacity: 0; transform: translateY(-10px); }
-                20% { opacity: 1; transform: translateY(0); }
-                80% { opacity: 1; transform: translateY(0); }
-                100% { opacity: 0; transform: translateY(-10px); }
-              }
-            </style>
-          `,
-          yAnchor: 4,
-        });
-
-        successOverlay.setMap(map);
-
-        // 3초 후 제거
-        setTimeout(() => {
-          successOverlay.setMap(null);
-        }, 3000);
-      }
-
-      // ▼▼▼ 수정된 부분 ▼▼▼
-      // 관광지 사진 마커를 추가하는 함수 (isVisited 파라미터 추가)
       function addPhotoMarker(lat, lng, imageUrl, title, contentId, isVisited) {
         try {
-          if (!map) {
-            console.error("지도가 초기화되지 않음");
-            return;
-          }
-
+          if (!map) return;
           const markerPosition = new kakao.maps.LatLng(lat, lng);
-
-          // isVisited 값에 따라 흑백 필터 스타일을 결정
           const filterStyle = isVisited ? "" : "filter: grayscale(100%);";
+          const initialBorderColor = isVisited ? "#2b92ec" : "#fff";
 
-          // ▼▼▼ 수정된 부분 (중첩 div 구조 사용) ▼▼▼
           const content = `
-            <div id="photo-overlay-${contentId}" 
-                 class="photo-overlay" 
-                 style="
-                    width: 50px;
-                    height: 50px;
-                    border-radius: 50%;
-                    border: 3px solid #fff; /* 테두리는 바깥 div에 적용 */
-                    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-                    cursor: pointer;
-                    transition: border-color 0.3s ease, border-width 0.3s ease, filter 0.5s ease; /* filter 전환 효과 추가 */
-                    overflow: hidden; /* 내부 이미지가 원 밖으로 나가지 않도록 */
-                 "
-                 onclick="handlePhotoClick('${contentId}', '${title}', ${lat}, ${lng});">
-              <div class="photo-image-inner" 
-                   style="
-                      width: 100%;
-                      height: 100%;
-                      background-image: url('${imageUrl}');
-                      background-size: cover;
-                      background-position: center;
-                      ${filterStyle} /* 흑백 필터는 내부 div에만 적용 */
-                      transition: filter 0.5s ease; /* 내부 이미지 필터 전환 효과 추가 */
-                   ">
-              </div>
-            </div>
-          `;
-          // ▲▲▲ 수정된 부분 ▲▲▲
+            <div id="photo-overlay-${contentId}" class="photo-overlay" 
+                 data-visited="${isVisited}"
+                 style="width:50px; height:50px; border-radius:50%; border:3px solid ${initialBorderColor}; box-shadow:0 2px 6px rgba(0,0,0,0.4); cursor:pointer; transition:all 0.2s ease; overflow:hidden; -webkit-tap-highlight-color:transparent; touch-action:manipulation;"
+                 onclick="handlePhotoClick('${contentId}', '${title}', ${lat}, ${lng});"
+                 ontouchstart="this.style.transform='scale(0.95)'"
+                 ontouchend="this.style.transform='scale(1)'">
+              <div class="photo-image-inner" style="width:100%; height:100%; background-image:url('${imageUrl}'); background-size:cover; background-position:center; ${filterStyle} transition:filter 0.5s ease; pointer-events:none;"></div>
+            </div>`;
 
-          // 커스텀 오버레이를 생성합니다.
           const photoOverlay = new kakao.maps.CustomOverlay({
             position: markerPosition,
             content: content,
             yAnchor: 1.0,
-            range: 14,
+            zIndex: 100,
           });
           photoOverlay.setMap(map);
           allOverlays.push(photoOverlay);
-
-          console.log("원형 관광지 오버레이 추가 완료:", title);
         } catch (error) {
-          console.error("관광지 오버레이 추가 오류:", error); // [cite: 92]
+          console.error("관광지 오버레이 추가 오류:", error);
         }
       }
-      // ▲▲▲ 수정된 부분 ▲▲▲
 
-      // ▼▼▼ 여기에 새로운 함수 추가 ▼▼▼
-      // 방문 완료된 마커의 스타일을 업데이트하는 함수
       function updateMarkerToVisited(contentId) {
         try {
-          // 1. ID를 사용해 오버레이 내부의 이미지 div를 찾습니다.
           const targetOverlay = document.getElementById(
             `photo-overlay-${contentId}`
           );
-          if (!targetOverlay) {
-            console.error(
-              `업데이트할 오버레이를 찾지 못했습니다: ${contentId}`
-            );
-            return;
+          if (!targetOverlay) return;
+
+          targetOverlay.setAttribute("data-visited", "true");
+
+          if (highlightedContentId !== contentId) {
+            targetOverlay.style.borderColor = "#2b92ec";
           }
 
-          // 2. 실제 이미지가 있는 내부 div를 찾습니다.
           const imageInnerDiv =
             targetOverlay.querySelector(".photo-image-inner");
-          if (imageInnerDiv) {
-            // 3. 흑백 필터를 제거하여 컬러로 만듭니다.
-            imageInnerDiv.style.filter = "none";
-            console.log(`마커 업데이트 완료 (컬러로 변경): ${contentId}`);
-          }
+          if (imageInnerDiv) imageInnerDiv.style.filter = "none";
         } catch (e) {
           console.error("마커 업데이트 중 오류 발생:", e);
         }
       }
-      // ▲▲▲ 새로운 함수 추가 완료 ▲▲▲
 
-      // 커스텀 오버레이 클릭 이벤트를 처리할 전역 함수
       function handlePhotoClick(contentId, title, lat, lng) {
-        console.log("관광지 이미지 클릭됨:", title, "Content ID:", contentId);
-        const message = JSON.stringify({
-          type: "markerClick",
-          contentId: contentId,
-          title: title,
-          lat: lat,
-          lng: lng,
-        });
         if (window.FlutterChannel) {
+          const message = JSON.stringify({
+            type: "markerClick",
+            contentId: contentId,
+            title: title,
+            lat: lat,
+            lng: lng,
+          });
           window.FlutterChannel.postMessage(message);
         }
-        // 여기에 인포윈도우를 열거나 다른 동작을 추가할 수 있습니다.
       }
 
-      // 전달된 모든 좌표가 보이도록 지도의 경계를 조정하는 함수 (개선)
       function fitMapBounds(points) {
         try {
-          if (!map || !points || points.length === 0) {
-            console.log("지도 범위 조정 실패: 지도나 좌표 데이터가 없습니다.");
-            return;
-          }
-          console.log(
-            `지도 범위 조정을 위해 ${points.length}개의 좌표를 받았습니다.`,
-            points
-          );
-          // 좌표가 1개인 경우 해당 위치를 중심으로 적절한 줌 레벨 설정
+          if (!map || !points || points.length === 0) return;
           if (points.length === 1) {
-            const center = new kakao.maps.LatLng(points[0].lat, points[0].lng);
-            map.setCenter(center);
-            map.setLevel(6); // 적절한 줌 레벨
-            console.log("단일 좌표로 지도 중심 설정 완료");
+            map.setCenter(new kakao.maps.LatLng(points[0].lat, points[0].lng));
+            map.setLevel(6);
             return;
           }
-
-          // 카카오맵의 LatLngBounds 객체를 생성합니다.
           const bounds = new kakao.maps.LatLngBounds();
-
-          // 전달받은 모든 좌표를 bounds 객체에 추가합니다.
           for (let i = 0; i < points.length; i++) {
-            const point = new kakao.maps.LatLng(points[i].lat, points[i].lng);
-            bounds.extend(point);
+            bounds.extend(new kakao.maps.LatLng(points[i].lat, points[i].lng));
           }
-
-          // bounds에 맞게 지도 확대/축소 레벨 및 중심을 설정합니다.
-          // 여백(padding)을 추가하여 마커들이 화면 가장자리에 붙지 않도록 합니다.
           map.setBounds(bounds, 50, 50, 50, 50);
-          // 상, 우, 하, 좌 여백(pixel)
-          console.log("지도 범위 조정 완료.");
         } catch (error) {
           console.error("지도 범위 조정 중 오류 발생:", error);
         }
       }
 
-      // 전역 함수 노출
+      function showMissionTextOnMarker(lat, lng, placeName) {
+        hideMissionText();
+        const content =
+          `<div style="padding: 5px 10px; background-color: rgba(0,0,0,0.75); color: white; border-radius: 15px; font-size: 14px; font-weight: bold; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3); -webkit-tap-highlight-color:transparent;">` +
+          `현재 미션: ${placeName}` +
+          `</div>`;
+        missionTextOverlay = new kakao.maps.CustomOverlay({
+          position: new kakao.maps.LatLng(lat, lng),
+          content: content,
+          yAnchor: 2.8,
+          zIndex: 101,
+        });
+        missionTextOverlay.setMap(map);
+      }
+
+      function hideMissionText() {
+        if (missionTextOverlay) {
+          missionTextOverlay.setMap(null);
+          missionTextOverlay = null;
+        }
+      }
+
       window.addCurrentLocationMarker = addCurrentLocationMarker;
       window.addPhotoMarker = addPhotoMarker;
       window.fitMapBounds = fitMapBounds;
       window.clearAllMarkers = clearAllMarkers;
-      window.handlePhotoClick = handlePhotoClick; // CustomOverlay 클릭 핸들러도 전역 노출
-      // ▼▼▼ 추가된 줄 ▼▼▼
+      window.handlePhotoClick = handlePhotoClick;
       window.highlightMarker = highlightMarker;
       window.resetAllMarkerBorders = resetAllMarkerBorders;
-      // ▲▲▲ 추가된 줄 ▲▲▲
+      window.updateMarkerToVisited = updateMarkerToVisited;
+      window.showMissionTextOnMarker = showMissionTextOnMarker;
+      window.hideMissionText = hideMissionText;
 
-      // ▼▼▼ 여기에 추가 ▼▼▼
-      window.updateMarkerToVisited = updateMarkerToVisited; // 새로 추가한 함수를 전역에 노출
-      // ▲▲▲ 추가 완료 ▲▲▲
-
-      // 디버그용 - 지도 준비 완료 시 Flutter에 알림
-      window.addEventListener("load", function () {
-        console.log("HTML 페이지 로드 완료");
-        if (window.FlutterChannel) {
-          window.FlutterChannel.postMessage("HTML 페이지 로드 완료");
-        }
+      document.addEventListener("DOMContentLoaded", function () {
+        document.body.style.touchAction = "manipulation";
       });
     </script>
   </body>

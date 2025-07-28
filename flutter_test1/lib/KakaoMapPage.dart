@@ -1,20 +1,19 @@
 // lib/KakaoMapPage.dart
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'PhotoItem.dart';
-import 'game_data_model.dart'; // game_data_model 임포트
+import 'game_data_model.dart';
 import 'quest_model.dart';
 
 class KakaoMapPage extends StatefulWidget {
-  // 생성자를 GameData를 받도록 수정
   final GameData gameData;
   const KakaoMapPage({super.key, required this.gameData});
 
@@ -30,8 +29,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   bool isLocationLoading = false;
   final ImagePicker _picker = ImagePicker();
   String? _currentTargetPlace;
-  Timer? _missionBannerTimer;
-  bool _showMissionBanner = false;
   String? _selectedTestPlace;
 
   // --- Data State (초기화 방식 변경) ---
@@ -69,16 +66,11 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   @override
   void initState() {
     super.initState();
-    // 1. widget.gameData를 사용하여 상태 변수 초기화
     _initializeStateFromGameData();
-
-    // 2. 웹뷰 초기화
     _initializeWebView();
-
     _selectedTestPlace = targetKeywords.isNotEmpty ? targetKeywords[0] : null;
   }
 
-  // GameData로부터 상태를 초기화하는 메서드
   void _initializeStateFromGameData() {
     final gameData = widget.gameData;
     _userId = gameData.userId;
@@ -100,7 +92,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     if (_sessionId != null) {
       _endGameSession();
     }
-    _missionBannerTimer?.cancel();
     super.dispose();
   }
 
@@ -150,7 +141,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     _getCurrentLocation(showMessages: false);
   }
 
-  // 데이터 새로고침이 필요한 함수들은 개별적으로 유지
   Future<void> _fetchUserProfile() async {
     try {
       final response =
@@ -211,7 +201,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
-  /// 테스트용으로 현재 위치를 선택된 관광지의 좌표로 설정
   Future<void> _setTestLocationTo(String? placeName) async {
     if (placeName == null) return;
     if (_placeCoords.containsKey(placeName)) {
@@ -357,7 +346,27 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
+  /// 미션 하이라이트(테두리, 메시지)를 제거하는 함수
+  Future<void> _clearMissionHighlight() async {
+    if (!mounted) return;
+    // 모든 마커의 테두리를 원래 상태(방문/미방문)로 되돌림
+    _controller.runJavaScript("resetAllMarkerBorders();").catchError((e) {
+      print("JS resetAllMarkerBorders 호출 오류: $e");
+    });
+    // 마커 위의 '현재 미션' 텍스트를 숨김
+    _controller.runJavaScript("hideMissionText();").catchError((e) {
+      print("JS hideMissionText 호출 오류: $e");
+    });
+    // 현재 선택된 미션 상태를 초기화
+    setState(() {
+      _currentTargetPlace = null;
+    });
+  }
+
   Future<void> _submitPrediction(File imageFile, String targetPlace) async {
+    // 예측 제출 직전에 하이라이트와 메시지를 제거
+    await _clearMissionHighlight();
+
     if (currentPosition == null) {
       _showPredictionResultOverlay(
         isCorrect: false,
@@ -366,6 +375,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       );
       return;
     }
+
     try {
       var request =
           http.MultipartRequest('POST', Uri.parse('$serverUrl/predict/'))
@@ -437,7 +447,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     if (_currentTargetPlace == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please select a landmark from the map first.'),
+          content: Text('먼저 지도에서 미션을 시작할 장소를 선택해주세요.'),
         ),
       );
       return;
@@ -448,11 +458,18 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         maxWidth: 1920,
         imageQuality: 85,
       );
+      // 이미지를 성공적으로 선택한 경우
       if (image != null) {
         await _submitPrediction(File(image.path), _currentTargetPlace!);
       }
+      // 사용자가 이미지 선택을 취소한 경우
+      else {
+        print("이미지 선택이 취소되었습니다.");
+        await _clearMissionHighlight();
+      }
     } catch (e) {
       print('Image selection error: $e');
+      await _clearMissionHighlight();
     }
   }
 
@@ -537,6 +554,9 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   Future<void> _pickImage() async {
     showModalBottomSheet(
       context: context,
+      // isDismissible: false를 추가하여 바깥쪽 탭으로 닫히지 않게 함
+      isDismissible: false,
+      enableDrag: false,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -549,12 +569,22 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                 _getImage(ImageSource.camera);
               },
             ),
+            // ListTile(
+            //   leading: const Icon(Icons.photo_library),
+            //   title: const Text('앨범에서 선택'),
+            //   onTap: () {
+            //     Navigator.pop(ctx);
+            //     _getImage(ImageSource.gallery);
+            //   },
+            // ),
+            // 취소 버튼 추가
             ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('앨범에서 선택'),
+              leading: const Icon(Icons.close),
+              title: const Text('취소'),
               onTap: () {
                 Navigator.pop(ctx);
-                _getImage(ImageSource.gallery);
+                // 사용자가 명시적으로 취소했으므로 하이라이트 제거
+                _clearMissionHighlight();
               },
             ),
           ],
@@ -1084,23 +1114,30 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                 Future.delayed(
                                     const Duration(milliseconds: 100), () {
                                   if (mounted) {
-                                    _missionBannerTimer?.cancel();
                                     setState(() {
                                       _currentTargetPlace = matchedPlace;
-                                      _showMissionBanner = true;
                                     });
-                                    _missionBannerTimer =
-                                        Timer(const Duration(seconds: 3), () {
-                                      if (mounted)
-                                        setState(
-                                            () => _showMissionBanner = false);
-                                    });
+                                    // 1. 해당 장소의 좌표 찾기
+                                    final coords = _placeCoords[matchedPlace];
+                                    if (coords != null) {
+                                      // 2. JavaScript 함수를 호출하여 마커 위에 텍스트 표시
+                                      _controller
+                                          .runJavaScript(
+                                              "showMissionTextOnMarker(${coords['lat']}, ${coords['lng']}, '$matchedPlace')")
+                                          .catchError((e) {
+                                        print(
+                                            "JS showMissionTextOnMarker 호출 오류: $e");
+                                      });
+                                    }
+
+                                    // 3. 마커 하이라이트
                                     _controller
                                         .runJavaScript(
                                             "highlightMarker('${photo.galContentId}')")
                                         .catchError((e) {
                                       print("JS highlightMarker 호출 오류: $e");
                                     });
+                                    // 4. 이미지 선택창 열기
                                     _pickImage();
                                   }
                                 });
@@ -1128,28 +1165,66 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
+  // ===================================================================
+  // ==================== 퀘스트 UI 관련 위젯 (수정됨) ====================
+  // ===================================================================
+
   void _showQuestDialog() {
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            // 'failed' 상태의 퀘스트를 필터링합니다.
+            final displayQuests =
+                _quests.where((q) => q.status != 'failed').toList();
+
             return AlertDialog(
-              title: const Text('오늘의 퀘스트'),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20.0),
+              ),
+              titlePadding: const EdgeInsets.all(0),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+              backgroundColor: Colors.grey[100],
+              title: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(20),
+                    topRight: Radius.circular(20),
+                  ),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.assignment, color: Colors.white),
+                    SizedBox(width: 10),
+                    Text(
+                      '오늘의 퀘스트',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               content: SizedBox(
                 width: double.maxFinite,
+                height: MediaQuery.of(context).size.height * 0.6,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    const SizedBox(height: 16),
                     if (_questProgress != null)
                       _buildProgressBar(_questProgress!),
                     const SizedBox(height: 16),
                     Expanded(
-                      child: ListView.builder(
+                      child: ListView.separated(
                         shrinkWrap: true,
-                        itemCount: _quests.length,
+                        itemCount: displayQuests.length, // 필터링된 리스트 사용
                         itemBuilder: (context, index) {
-                          final quest = _quests[index];
+                          final quest = displayQuests[index]; // 필터링된 리스트 사용
                           switch (quest.status) {
                             case 'active':
                               return _buildActiveQuestCard(
@@ -1164,6 +1239,8 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                   child: ListTile(title: Text(quest.title)));
                           }
                         },
+                        separatorBuilder: (context, index) =>
+                            const SizedBox(height: 8),
                       ),
                     ),
                   ],
@@ -1181,13 +1258,30 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
+  IconData _getIconForQuestType(String type) {
+    switch (type) {
+      case 'theme_mission':
+        return Icons.palette_outlined;
+      case 'visit_count':
+        return Icons.hiking;
+      case 'history_quiz':
+        return Icons.school_outlined;
+      default:
+        return Icons.tour_outlined;
+    }
+  }
+
   Widget _buildProgressBar(QuestProgress progress) {
     return Column(
       children: [
-        LinearProgressIndicator(
-          value: progress.progressPercentage / 100,
-          minHeight: 10,
-          borderRadius: BorderRadius.circular(5),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: LinearProgressIndicator(
+            value: progress.progressPercentage / 100,
+            minHeight: 12,
+            backgroundColor: Colors.grey[300],
+            valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
+          ),
         ),
         const SizedBox(height: 8),
         Row(
@@ -1203,33 +1297,63 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
+  /// [수정됨] 퀴즈 퀘스트를 위한 UI 및 로직
   Widget _buildActiveQuestCard(Quest quest, StateSetter setDialogState) {
+    final questIcon = _getIconForQuestType(quest.type);
+
     if (quest.type == 'history_quiz' && quest.isAnswered != true) {
       return Card(
-        color: Colors.blue[50],
+        elevation: 2,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+        clipBehavior: Clip.antiAlias,
         child: ExpansionTile(
-          key: PageStorageKey(quest.questId),
-          title: Text(quest.title),
-          subtitle: Text('퀴즈를 풀어보세요! (+${quest.points}점)'),
+          backgroundColor: Colors.blue.withOpacity(0.05),
+          leading: Icon(questIcon, color: Colors.blue.shade700),
+          title: Text(
+            quest.title,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          subtitle: Text('퀴즈를 풀어보세요! (+${quest.points}점)',
+              style: TextStyle(color: Colors.grey.shade600)),
           children: [
             Padding(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(quest.quizQuestion ?? '문제를 불러오는 데 실패했습니다.',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 15)),
+                  const SizedBox(height: 12),
+                  // [핵심 수정] 각 선지를 InkWell과 Container로 감싸 탭 가능하게 하고 배경을 추가
                   ...(quest.quizOptions ?? []).asMap().entries.map((entry) {
-                    return ListTile(
-                      title: Text(entry.value),
+                    int index = entry.key;
+                    String option = entry.value;
+                    return InkWell(
                       onTap: () async {
-                        await _submitQuizAnswer(quest.questId, entry.key);
-                        if (mounted) {
-                          Navigator.of(context).pop();
-                          _showQuestDialog();
-                        }
+                        // 퀴즈 답변 제출 함수 호출
+                        await _submitQuizAnswer(
+                            quest.questId, index, setDialogState);
                       },
+                      child: Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.symmetric(vertical: 4.0),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 10.0, horizontal: 12.0),
+                        decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8.0),
+                            border: Border.all(color: Colors.grey.shade300)),
+                        child: Row(
+                          children: [
+                            Text('${index + 1}. ',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            Expanded(child: Text(option)),
+                          ],
+                        ),
+                      ),
                     );
                   }).toList(),
                 ],
@@ -1239,28 +1363,51 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         ),
       );
     }
+
+    // 다른 종류의 '진행 중' 퀘스트 카드
     return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
       child: ListTile(
-        leading: const Icon(Icons.tour),
-        title: Text(quest.title),
+        leading: Icon(questIcon, color: Colors.blue.shade700),
+        title: Text(
+          quest.title,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
         subtitle: Text(
-            '목표: ${quest.completedPlaces.length} / ${quest.requiredVisits}'),
+            '목표: ${quest.completedPlaces.length} / ${quest.requiredVisits}',
+            style: TextStyle(color: Colors.grey.shade600)),
       ),
     );
   }
 
   Widget _buildRewardReadyCard(Quest quest, StateSetter setDialogState) {
     return Card(
-      color: Colors.orange[100],
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: Colors.orange.shade300, width: 1.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      color: Colors.orange[50],
       child: ListTile(
         leading: const Text('🎁', style: TextStyle(fontSize: 24)),
-        title: Text(quest.title),
-        subtitle: Text('보상: +${quest.points}점'),
+        title: Text(
+          quest.title,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        subtitle: Text('보상: +${quest.points}점',
+            style: TextStyle(
+                color: Colors.orange.shade800, fontWeight: FontWeight.w500)),
         trailing: ElevatedButton(
           onPressed: () => _claimReward(quest.questId, setDialogState),
           style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange, foregroundColor: Colors.white),
-          child: const Text('보상 받기'),
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              elevation: 2),
+          child: const Text('받기'),
         ),
       ),
     );
@@ -1268,17 +1415,28 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
 
   Widget _buildCompletedQuestCard(Quest quest) {
     return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
       color: Colors.grey[300],
       child: ListTile(
-        leading: const Icon(Icons.check_circle, color: Colors.green),
-        title: Text(quest.title,
-            style: const TextStyle(decoration: TextDecoration.lineThrough)),
-        subtitle: Text('보상 +${quest.points}점 획득 완료'),
+        leading: Icon(Icons.check_circle, color: Colors.green.shade600),
+        title: Text(
+          quest.title,
+          style: TextStyle(
+            fontWeight: FontWeight.normal,
+            fontSize: 15,
+            color: Colors.grey.shade700,
+          ),
+        ),
+        subtitle: Text('보상 +${quest.points}점 획득 완료',
+            style: TextStyle(color: Colors.grey.shade600)),
       ),
     );
   }
 
-  Future<void> _submitQuizAnswer(String questId, int answerIndex) async {
+  /// [신규] 퀴즈 답변을 서버에 제출하는 함수 (수정됨)
+  Future<void> _submitQuizAnswer(
+      String questId, int answerIndex, StateSetter setDialogState) async {
     try {
       final response = await http.post(
         Uri.parse('$serverUrl/quests/quiz/answer'),
@@ -1292,19 +1450,114 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         final result = data['result'];
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message']),
-            backgroundColor: result['is_correct'] ? Colors.green : Colors.red,
-          ),
+        final bool isCorrect = result['is_correct'];
+
+        // 중앙 오버레이로 결과 표시
+        _showQuestResultOverlay(
+          isCorrect: isCorrect,
+          message: result['message'],
+          scoreEarned: 0, // 점수는 보상받기 시점에 표시
         );
+
+        // [수정] 오답 시 퀘스트를 목록에서 제거하는 로직 삭제
+        // 이제 퀘스트가 사라지지 않고 재시도 가능합니다.
+
+        // 서버로부터 최신 퀘스트 목록과 유저 정보를 다시 불러와 UI를 갱신
         await Future.wait([_fetchQuestsAndProgress(), _fetchUserProfile()]);
+        setDialogState(() {}); // AlertDialog의 내용만 다시 그림
+      } else {
+        final error = json.decode(utf8.decode(response.bodyBytes));
+        _showQuestResultOverlay(
+          isCorrect: false,
+          message: error['detail'] ?? '답변 제출에 실패했습니다.',
+          scoreEarned: 0,
+        );
       }
     } catch (e) {
       print('퀴즈 답변 제출 오류: $e');
+      _showQuestResultOverlay(
+        isCorrect: false,
+        message: '네트워크 오류가 발생했습니다.',
+        scoreEarned: 0,
+      );
     }
   }
 
+  /// [신규/개선] 퀘스트 관련 결과(성공/실패/보상)를 표시하는 오버레이 함수
+  void _showQuestResultOverlay({
+    required bool isCorrect,
+    required String message,
+    required int scoreEarned,
+  }) {
+    if (!mounted) return;
+
+    final Widget resultTitle = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(
+          isCorrect ? Icons.check_circle : Icons.cancel,
+          color: isCorrect ? Colors.green : Colors.red,
+          size: 28,
+        ),
+        const SizedBox(width: 10),
+        Text(
+          isCorrect ? '성공!' : '실패',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+        ),
+      ],
+    );
+
+    Widget resultContent;
+    // 점수가 있을 경우 (보상 받기 등)에만 점수 표시
+    if (isCorrect && scoreEarned > 0) {
+      resultContent = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 18)),
+          const SizedBox(height: 12),
+          Text(
+            '+$scoreEarned 점',
+            style: const TextStyle(
+                fontSize: 32, fontWeight: FontWeight.bold, color: Colors.blue),
+          ),
+        ],
+      );
+    } else {
+      // 일반적인 성공/실패 메시지만 표시
+      resultContent = Text(message,
+          textAlign: TextAlign.center, style: const TextStyle(fontSize: 18));
+    }
+
+    final overlayContent = Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 40.0),
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        decoration: BoxDecoration(
+          color: Theme.of(context).dialogBackgroundColor,
+          borderRadius: BorderRadius.circular(20.0),
+          boxShadow: const [
+            BoxShadow(
+                color: Colors.black26,
+                blurRadius: 10.0,
+                offset: Offset(0.0, 4.0))
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [resultTitle, const SizedBox(height: 20), resultContent],
+        ),
+      ),
+    );
+
+    _showAutoDismissingOverlay(
+      child: overlayContent,
+      duration: const Duration(seconds: 3),
+    );
+  }
+
+  /// [수정됨] 보상 받기 함수에서 새로운 오버레이를 사용하도록 변경
   Future<void> _claimReward(String questId, StateSetter setDialogState) async {
     try {
       final response = await http.post(
@@ -1316,26 +1569,29 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         final data = json.decode(utf8.decode(response.bodyBytes));
         final result = data['result'];
         final int rewardPoints = result['reward_points'] ?? 0;
-        showDialog(
-          context: context,
-          builder: (dContext) => AlertDialog(
-            title: const Text('🎉 축하합니다!'),
-            content: Text('+$rewardPoints점을 획득했습니다!'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(dContext),
-                  child: const Text('확인'))
-            ],
-          ),
+
+        _showQuestResultOverlay(
+          isCorrect: true, // 보상받기는 성공적인 이벤트
+          message: '퀘스트 완료!',
+          scoreEarned: rewardPoints,
         );
+
         await Future.wait([_fetchQuestsAndProgress(), _fetchUserProfile()]);
-        setDialogState(() {});
+        setDialogState(() {}); // 다이얼로그 UI 갱신
+      } else {
+        final error = json.decode(utf8.decode(response.bodyBytes));
+        _showQuestResultOverlay(
+          isCorrect: false,
+          message: error['detail'] ?? '보상 받기에 실패했습니다.',
+          scoreEarned: 0,
+        );
       }
     } catch (e) {
       print('보상 받기 오류: $e');
     }
   }
 
+  // (이하 나머지 코드는 이전과 동일)
   Widget _buildMenuOption({
     required double distance,
     required String tooltip,
@@ -1597,31 +1853,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               ),
             ),
           ),
-          if (_showMissionBanner && _currentTargetPlace != null)
-            Positioned(
-              bottom: 30,
-              left: 0,
-              right: 0,
-              child: AnimatedOpacity(
-                opacity: _isMenuOpen ? 0.0 : 1.0,
-                duration: _menuAnimationDuration,
-                child: Center(
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.75),
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    child: Text('현재 미션: $_currentTargetPlace',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ),
-            ),
           _buildFabMenu(),
         ],
       ),

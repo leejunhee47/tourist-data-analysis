@@ -15,6 +15,7 @@ class QuestType(Enum):
     THEME_MISSION = "theme_mission"    # 테마 기반 미션 퀘스트
     FIRST_VISIT = "first_visit"        # 첫 방문 퀘스트
     HISTORY_QUIZ = "history_quiz"      # 역사 퀴즈 퀘스트
+    VISIT_COUNT = "visit_count"        # 방문 횟수 퀘스트
 
 # 퀘스트 상태 정의
 class QuestStatus(Enum):
@@ -31,7 +32,7 @@ PLACE_COORDINATES = {
     '광화문': (37.5725, 126.9768),
     '남산서울타워': (37.5511, 126.9882),
     '북촌한옥마을': (37.5825, 126.9849),
-    '청계천': (37.5697, 126.9975),
+    '청계천': (37.56961, 127.0059),
     '독립문': (37.5725, 126.9595),
     '서울도서관': (37.5664, 126.9780)
 }
@@ -301,33 +302,63 @@ def create_first_visit_quest_excluding_theme(user_id: str, db, theme_mission_que
     
     return quest_data
 
-def create_history_quiz_quest(user_id: str) -> Dict[str, Any]:
+def create_history_quiz_quests(user_id: str) -> List[Dict[str, Any]]:
     """
-    역사 퀴즈 퀘스트 생성 함수
+    전체 관광지 중 랜덤으로 3개를 뽑아 각각 퀴즈 퀘스트를 생성하는 함수
     - user_id: 사용자 ID
-    - 랜덤 관광지의 퀴즈 1개를 출제
+    - 반환: 퀴즈 퀘스트 3개 리스트
     """
-    all_places = list(PLACE_QUIZZES.keys())  # 퀴즈가 있는 모든 관광지
-    selected_place = random.choice(all_places)  # 랜덤 관광지 선택
-    place_quizzes = PLACE_QUIZZES[selected_place]
-    selected_quiz = random.choice(place_quizzes)  # 해당 관광지의 랜덤 퀴즈 선택
+    all_places = list(PLACE_QUIZZES.keys())
+    # 관광지 3개 랜덤 선택 (중복 없이)
+    selected_places = random.sample(all_places, 3)
+    quiz_quests = []
+    today = datetime.now().strftime('%Y-%m-%d')
+    for selected_place in selected_places:
+        place_quizzes = PLACE_QUIZZES[selected_place]
+        selected_quiz = random.choice(place_quizzes)
+        quest_id = str(uuid.uuid4())
+        quest_data = {
+            "quest_id": quest_id,
+            "user_id": user_id,
+            "type": QuestType.HISTORY_QUIZ.value,
+            "title": "역사 퀴즈",
+            "description": f"{selected_place}에 대한 역사 퀴즈를 풀어보세요",
+            "target_place": selected_place,
+            "quiz_question": selected_quiz["question"],
+            "quiz_options": selected_quiz["options"],
+            "correct_answer": selected_quiz["correct_answer"],
+            "explanation": selected_quiz["explanation"],
+            "is_answered": False,
+            "user_answer": None,
+            "is_correct": None,
+            "points": 20,  # 퀴즈 퀘스트는 20점
+            "status": QuestStatus.ACTIVE.value,
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "expires_at": datetime.now() + timedelta(days=1),
+            "date": today
+        }
+        quiz_quests.append(quest_data)
+    return quiz_quests
+
+def create_visit_count_quest(user_id: str) -> Dict[str, Any]:
+    """
+    관광지 3개 방문 퀘스트 생성 함수
+    - user_id: 사용자 ID
+    - 어떤 관광지든 상관없이 3개만 방문하면 클리어되는 퀘스트
+    - 반환: 방문 횟수 퀘스트 1개
+    """
     quest_id = str(uuid.uuid4())
     today = datetime.now().strftime('%Y-%m-%d')
     quest_data = {
         "quest_id": quest_id,
         "user_id": user_id,
-        "type": QuestType.HISTORY_QUIZ.value,
-        "title": "역사 퀴즈",
-        "description": f"{selected_place}에 대한 역사 퀴즈를 풀어보세요",
-        "target_place": selected_place,
-        "quiz_question": selected_quiz["question"],
-        "quiz_options": selected_quiz["options"],
-        "correct_answer": selected_quiz["correct_answer"],
-        "explanation": selected_quiz["explanation"],
-        "is_answered": False,
-        "user_answer": None,
-        "is_correct": None,
-        "points": 20,  # 모든 퀘스트는 20점으로 통일
+        "type": QuestType.VISIT_COUNT.value,
+        "title": "관광지 탐방가",
+        "description": "오늘 관광지를 3곳 방문하여 탐방가가 되어보세요",
+        "required_visits": 3,  # 3곳 방문 필요
+        "completed_places": [],  # 방문한 관광지 목록
+        "current_visit_count": 0,  # 현재 방문 횟수
+        "points": 30,  # 방문 횟수 퀘스트는 30점 (더 높은 보상)
         "status": QuestStatus.ACTIVE.value,
         "created_at": firestore.SERVER_TIMESTAMP,
         "expires_at": datetime.now() + timedelta(days=1),
@@ -337,59 +368,57 @@ def create_history_quiz_quest(user_id: str) -> Dict[str, Any]:
 
 def generate_daily_quests(user_id: str) -> List[Dict[str, Any]]:
     """
-    일일 테마 미션 퀘스트 3개 생성 및 저장
+    일일 테마 미션 퀘스트 3개 + 퀴즈 퀘스트 3개 + 방문 횟수 퀘스트 1개 생성 및 저장
     - user_id: 사용자 ID
     - 이미 생성된 퀘스트가 있으면 반환, 없으면 새로 생성
-    - 3개의 서로 다른 테마 미션 생성
+    - 3개의 서로 다른 테마 미션 + 3개의 서로 다른 퀴즈 퀘스트 + 1개의 방문 횟수 퀘스트 생성
     """
     try:
         db = initialize_firebase()
         if not db:
             print("❌ Firebase 초기화 실패")
             raise Exception("Firebase 데이터베이스 연결에 실패했습니다.")
-        
         print(f"✅ Firebase 연결 성공 - 사용자: {user_id}")
-        
         today = datetime.now().strftime('%Y-%m-%d')
         quests_ref = db.collection(DAILY_QUESTS_COLLECTION)
-        
         # 이미 오늘의 퀘스트가 있으면 반환
         existing_quests = quests_ref.where('user_id', '==', user_id).where('date', '==', today).get()
         if existing_quests:
             quests = []
             for quest_doc in existing_quests:
                 quest_data = quest_doc.to_dict()
-                # SERVER_TIMESTAMP 값을 실제 datetime으로 변환
                 quest_data = convert_timestamps(quest_data)
                 quests.append(quest_data)
             print(f"📋 기존 퀘스트 {len(quests)}개 조회됨")
             return quests
-        
-        print("🆕 새로운 테마 미션 퀘스트 3개 생성 중...")
+        print("🆕 새로운 테마 미션 퀘스트 3개 + 퀴즈 퀘스트 3개 + 방문 횟수 퀘스트 1개 생성 중...")
         quests = []
-        
         # 3개의 서로 다른 테마 미션 생성
         available_themes = list(PLACE_THEMES.keys())
-        selected_themes = random.sample(available_themes, 3)  # 3개 테마 랜덤 선택
-        
+        selected_themes = random.sample(available_themes, 3)
         for i, theme in enumerate(selected_themes, 1):
             theme_mission_quest = create_theme_mission_quest_with_theme(user_id, theme)
             quests.append(theme_mission_quest)
             print(f"   {i}. {PLACE_THEMES[theme]['name']} 테마 미션 생성 완료")
-        
+        # 3개의 퀴즈 퀘스트 생성
+        quiz_quests = create_history_quiz_quests(user_id)
+        for i, quiz_quest in enumerate(quiz_quests, 1):
+            quests.append(quiz_quest)
+            print(f"   {i}. {quiz_quest['target_place']} 퀴즈 퀘스트 생성 완료")
+        # 1개의 방문 횟수 퀘스트 생성
+        visit_count_quest = create_visit_count_quest(user_id)
+        quests.append(visit_count_quest)
+        print(f"   1. 관광지 탐방가 퀘스트 생성 완료 (3곳 방문 필요)")
         # 퀘스트 DB에 저장
         for quest in quests:
             quests_ref.document(quest['quest_id']).set(quest)
-        
         # 새로 생성된 퀘스트들도 SERVER_TIMESTAMP 변환
         converted_quests = []
         for quest in quests:
             converted_quest = convert_timestamps(quest)
             converted_quests.append(converted_quest)
-        
-        print(f"✅ 테마 미션 퀘스트 {len(converted_quests)}개 생성 및 저장 완료")
+        print(f"✅ 테마 미션 + 퀴즈 퀘스트 + 방문 횟수 퀘스트 {len(converted_quests)}개 생성 및 저장 완료")
         return converted_quests
-        
     except Exception as e:
         print(f"❌ 퀘스트 생성 중 오류: {e}")
         import traceback
@@ -437,32 +466,43 @@ def check_quest_completion(user_id: str, visited_place: str) -> List[Dict[str, A
             continue
         # 테마 기반 미션 퀘스트 완료 체크
         if quest_data['type'] == QuestType.THEME_MISSION.value:
-            # 방문한 관광지가 해당 테마의 관광지인지 확인
             if visited_place in quest_data['target_places']:
-                # 이미 완료된 관광지인지 확인
                 if visited_place not in quest_data['completed_places']:
                     quest_data['completed_places'].append(visited_place)
-                    
-                    # 1곳 방문했는지 확인 (테마 미션은 1곳만 방문하면 완료)
                     if len(quest_data['completed_places']) >= quest_data['required_visits']:
-                        quest_data['status'] = QuestStatus.REWARD_READY.value  # 보상 받을 준비 상태로 변경
+                        quest_data['status'] = QuestStatus.REWARD_READY.value
                         completed_quests.append(quest_data)
-                    
-                    # DB 업데이트 (방문 기록 추가)
                     quests_ref.document(quest_data['quest_id']).update({
                         'completed_places': quest_data['completed_places'],
                         'status': quest_data['status'],
                         'completed_at': firestore.SERVER_TIMESTAMP if quest_data['status'] == QuestStatus.REWARD_READY.value else None
                     })
+        # 방문 횟수 퀘스트 완료 체크
+        elif quest_data['type'] == QuestType.VISIT_COUNT.value:
+            if visited_place not in quest_data['completed_places']:
+                quest_data['completed_places'].append(visited_place)
+                quest_data['current_visit_count'] = len(quest_data['completed_places'])
+                if quest_data['current_visit_count'] >= quest_data['required_visits']:
+                    quest_data['status'] = QuestStatus.REWARD_READY.value
+                    completed_quests.append(quest_data)
+                quests_ref.document(quest_data['quest_id']).update({
+                    'completed_places': quest_data['completed_places'],
+                    'current_visit_count': quest_data['current_visit_count'],
+                    'status': quest_data['status'],
+                    'completed_at': firestore.SERVER_TIMESTAMP if quest_data['status'] == QuestStatus.REWARD_READY.value else None
+                })
+                print(f"🎯 방문 횟수 퀘스트 진행! 사용자 {user_id}")
+                print(f"   방문한 곳: {visited_place}")
+                print(f"   현재 방문 횟수: {quest_data['current_visit_count']}/{quest_data['required_visits']}")
+                if quest_data['status'] == QuestStatus.REWARD_READY.value:
+                    print(f"   ✅ 퀘스트 완료! 보상 지급 준비됨")
+                print(f"   ──────────────────────────────")
     return completed_quests
 
 def submit_quiz_answer(user_id: str, quest_id: str, answer_index: int) -> Dict[str, Any]:
     """
-    퀴즈 퀘스트 정답 제출 및 결과 처리
-    - user_id: 사용자 ID
-    - quest_id: 퀘스트 ID
-    - answer_index: 사용자가 선택한 답변 인덱스
-    - 정답 여부, 획득 점수 등 결과 반환
+    퀴즈 퀘스트 정답 제출 및 결과 처리 (수정됨)
+    - 오답 시 DB를 변경하지 않아 재시도 가능하도록 함
     """
     db = initialize_firebase()
     if not db:
@@ -476,20 +516,20 @@ def submit_quiz_answer(user_id: str, quest_id: str, answer_index: int) -> Dict[s
         return {"error": "Not a quiz quest"}
     if quest_data.get('is_answered', False):
         return {"error": "Quiz already answered"}
-    is_correct = (answer_index == quest_data['correct_answer'])  # 정답 여부 판별
-    points_earned = quest_data['points'] if is_correct else 0    # 정답 시 점수 획득
-    # 퀘스트 상태 및 결과 DB 업데이트
-    quest_ref.update({
-        'is_answered': True,
-        'user_answer': answer_index,
-        'is_correct': is_correct,
-        'status': QuestStatus.REWARD_READY.value if is_correct else QuestStatus.FAILED.value,  # 정답 시 보상 받을 준비 상태로 변경
-        'completed_at': firestore.SERVER_TIMESTAMP
-    })
-    
-    # 정답일 경우 즉시 점수 지급하지 않고 보상 지급 시에만 지급
+
+    is_correct = (answer_index == quest_data['correct_answer'])
+    points_earned = quest_data['points'] if is_correct else 0
+
     if is_correct:
-        # 실제 Firestore에서 최신 총점 확인
+        # 정답일 경우에만 DB를 업데이트합니다.
+        quest_ref.update({
+            'is_answered': True,
+            'user_answer': answer_index,
+            'is_correct': True,
+            'status': QuestStatus.REWARD_READY.value,
+            'completed_at': firestore.SERVER_TIMESTAMP
+        })
+        
         user_ref = db.collection(USERS_COLLECTION).document(user_id)
         user_doc = user_ref.get()
         actual_total_score = user_doc.to_dict().get('total_score', 0)
@@ -500,6 +540,8 @@ def submit_quiz_answer(user_id: str, quest_id: str, answer_index: int) -> Dict[s
         print(f"   보상 지급 시 +20점을 받을 수 있습니다.")
         print(f"   현재 총점: {actual_total_score}점 (Firestore 확인)")
         print(f"   ──────────────────────────────")
+    # 오답일 경우, DB 업데이트를 하지 않아 사용자가 다시 시도할 수 있습니다.
+    
     return {
         "quest_id": quest_id,
         "is_correct": is_correct,
@@ -685,4 +727,4 @@ def get_quest_progress(user_id: str) -> Dict[str, Any]:
         "claimed_quests": claimed_quests,
         "available_reward": available_reward,
         "progress_percentage": (reward_ready_quests + claimed_quests) / total_quests * 100 if total_quests > 0 else 0
-    } 
+    }
