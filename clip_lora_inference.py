@@ -2,13 +2,16 @@ import torch
 import clip
 from PIL import Image
 import os
+from pathlib import Path
 from tqdm import tqdm
 from clip_lora_finetuning import LoRACLIP, LoRALayer  # LoRA 모델 클래스 import
 import numpy as np
-from math import radians, sin, cos, sqrt, atan2
+from place_config import PLACE_COORDINATES, PLACE_MAPPING, calculate_distance_km
+
+current_dir = Path(__file__).parent
 
 class CLIPLoRAInference:
-    def __init__(self, model_path="fine_tuned_model/new_best_model.pth"):
+    def __init__(self, model_path = current_dir / "saved_models" / "new_best_model.pth"):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"🚀 장치: {self.device}")
         
@@ -19,32 +22,12 @@ class CLIPLoRAInference:
         # LoRA 모델 로드
         self.load_lora_model(model_path)
         
-        # 장소 매핑 (한글 -> 영어)
-        self.place_mapping = {
-            '경복궁': 'Gyeongbokgung Palace',
-            '경희궁': 'Gyeonghui Palace', 
-            '광화문': 'Gwanghwamun Gate',
-            '남산서울타워': 'Namsan Seoul Tower',
-            '북촌한옥마을': 'Bukchon Hanok Village',
-            '청계천': 'Cheonggyecheon Stream',
-            '독립문': 'Independence Gate',
-            '서울도서관': 'Seoul Metropolitan Library'
-        }
+        # 공통 설정 사용
+        self.place_mapping = PLACE_MAPPING
+        self.place_coords = PLACE_COORDINATES
         
         # 텍스트 임베딩 미리 계산
         self.text_features = self.encode_text_descriptions()
-        
-        # 장소별 좌표 추가 (위도, 경도)
-        self.place_coords = {
-            '경복궁': (37.5796, 126.9770),
-            '경희궁': (37.5704, 126.9682),
-            '광화문': (37.5725, 126.9768),
-            '남산서울타워': (37.5511, 126.9882),
-            '북촌한옥마을': (37.5825, 126.9849),
-            '청계천': (37.5697, 126.9975),
-            '독립문': (37.5725, 126.9595),
-            '서울도서관': (37.5664, 126.9780)
-        }
         
         print("✅ 모델 준비 완료!")
     
@@ -62,7 +45,7 @@ class CLIPLoRAInference:
             rank=checkpoint.get('rank', 8),
             alpha=checkpoint.get('alpha', 16)
         ).to(self.device)
-        
+
         # LoRA 가중치 로드
         self.model.load_state_dict(checkpoint['lora_state_dict'], strict=False)
         self.model.eval()
@@ -82,17 +65,7 @@ class CLIPLoRAInference:
     
     def calculate_distance(self, lat1, lon1, lat2, lon2):
         """Haversine 공식을 사용한 두 지점 간의 거리 계산 (km)"""
-        R = 6371  # 지구의 반경 (km)
-        
-        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        
-        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-        c = 2 * atan2(sqrt(a), sqrt(1-a))
-        distance = R * c
-        
-        return distance
+        return calculate_distance_km(lat1, lon1, lat2, lon2)
     
     def get_location_weight(self, user_lat, user_lon, place_name):
         """위치 기반 가중치 계산"""
@@ -120,13 +93,13 @@ class CLIPLoRAInference:
                 
                 # 결과 저장을 위한 리스트
                 results = []
-                
+
                 # 각 장소별 결과 계산
                 for idx, (place_kor, place_eng) in enumerate(self.place_mapping.items()):
                     confidence = float(similarity[0][idx]) * 100
                     place_coord = self.place_coords[place_kor]
                     distance = None
-                    
+
                     if user_lat is not None and user_lon is not None:
                         distance = self.calculate_distance(
                             user_lat, user_lon, 

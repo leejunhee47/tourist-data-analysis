@@ -558,7 +558,7 @@ def test_visit_count_quest():
             print(f"[6단계] 방문 수(중복 제외): {len(my_quest['completed_places'])}")
     # 최종 점수 확인
     final_score = get_user_score(user_id)
-    print(f"\n🏁 최종 점수: {final_score}점 (예상: 60점)")
+    print(f"\n🏁 최종 점수: {final_score}점 (예상: 30점)")
     print(f"방문한 관광지(고정): {visited_places}")
     print("\n=== 방문 횟수 퀘스트 테스트 종료 ===\n")
 

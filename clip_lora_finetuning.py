@@ -42,9 +42,9 @@ class LoRACLIP(nn.Module):
         self.lora_layers = nn.ModuleDict()
         self.add_lora_layers()
         
-        print(f"[SUCCESS] LoRA layers added with rank={rank}, alpha={alpha}")
-        print(f"[INFO] Trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
-        print(f"[INFO] Total parameters: {sum(p.numel() for p in self.parameters()):,}")
+        print(f"✅ LoRA layers added with rank={rank}, alpha={alpha}")
+        print(f"📊 Trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
+        print(f"📊 Total parameters: {sum(p.numel() for p in self.parameters()):,}")
     
     def add_lora_layers(self):
         """주요 어텐션 레이어에 LoRA 추가"""
@@ -151,9 +151,7 @@ class SeoulTouristDataset(Dataset):
             '광화문': 'Gwanghwamun Gate',
             '남산서울타워': 'Namsan Seoul Tower',
             '북촌한옥마을': 'Bukchon Hanok Village',
-            '청계천': 'Cheonggyecheon Stream',
-            '독립문': 'Independence Gate',
-            '서울도서관': 'Seoul Metropolitan Library'
+            '청계천': 'Cheonggyecheon Stream'
         }
         
         self.samples = self.load_samples()
@@ -185,7 +183,7 @@ class SeoulTouristDataset(Dataset):
     
     def print_dataset_info(self):
         """데이터셋 정보 출력"""
-        print(f"\n[INFO] Dataset loaded: {len(self.samples)} samples")
+        print(f"\n📊 Dataset loaded: {len(self.samples)} samples")
         
         # 각 장소별 이미지 수 계산
         place_counts = {}
@@ -198,7 +196,7 @@ class SeoulTouristDataset(Dataset):
             print(f"  - {place}: {count}장")
         
         if self.augment and not self.is_validation:
-            print("\n[INFO] Augmentation enabled:")
+            print("\n🔄 Augmentation enabled:")
             print("  - Image: Moderate augmentation (60% probability)")
             print("  - Text: 2 variations per image")
     
@@ -232,8 +230,8 @@ class CLIPLoRATrainer:
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         
-        print(f"[INFO] Initializing CLIP-LoRA Trainer")
-        print(f"[INFO] Device: {self.device}")
+        print(f"🚀 Initializing CLIP-LoRA Trainer")
+        print(f"📱 Device: {self.device}")
         
         # CLIP 모델 로드 시 float32로 변환
         clip_model, self.preprocess = clip.load("ViT-B/32", device=self.device)
@@ -258,66 +256,7 @@ class CLIPLoRATrainer:
             self.optimizer, T_max=50, eta_min=1e-6
         )
         
-        print("[SUCCESS] CLIP-LoRA Trainer initialized!")
-    
-    def load_existing_model(self, model_path):
-        """기존 학습된 LoRA 모델 로드"""
-        try:
-            if not os.path.exists(model_path):
-                print(f"[ERROR] 모델 파일을 찾을 수 없습니다: {model_path}")
-                return False
-            
-            print(f"[INFO] 기존 모델 로드 중: {model_path}")
-            checkpoint = torch.load(model_path, map_location=self.device)
-            
-            # LoRA 파라미터 로드
-            if 'lora_state_dict' in checkpoint:
-                # LoRA 파라미터만 있는 경우
-                lora_state_dict = checkpoint['lora_state_dict']
-                
-                # 현재 모델의 LoRA 파라미터와 매칭되는 것만 로드
-                current_state = self.model.state_dict()
-                loaded_params = 0
-                
-                for name, param in lora_state_dict.items():
-                    if name in current_state and current_state[name].shape == param.shape:
-                        current_state[name].copy_(param)
-                        loaded_params += 1
-                
-                print(f"[SUCCESS] LoRA 파라미터 로드 완료: {loaded_params}개")
-                
-                # 옵티마이저 상태도 로드 (있는 경우)
-                if 'optimizer_state_dict' in checkpoint:
-                    try:
-                        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                        print("[SUCCESS] 옵티마이저 상태 로드 완료")
-                    except:
-                        print("[WARNING] 옵티마이저 상태 로드 실패 - 새로 시작합니다")
-                        
-            elif 'model_state_dict' in checkpoint:
-                # 전체 모델 상태가 있는 경우
-                model_state = checkpoint['model_state_dict']
-                
-                # LoRA 파라미터만 추출해서 로드
-                current_state = self.model.state_dict()
-                loaded_params = 0
-                
-                for name, param in model_state.items():
-                    if name in current_state and 'lora' in name and current_state[name].shape == param.shape:
-                        current_state[name].copy_(param)
-                        loaded_params += 1
-                
-                print(f"[SUCCESS] 모델에서 LoRA 파라미터 추출 및 로드 완료: {loaded_params}개")
-            
-            else:
-                print("[ERROR] 호환되지 않는 모델 형식입니다")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            print(f"[ERROR] 모델 로드 실패: {e}")
-            return False
+        print("✅ CLIP-LoRA Trainer initialized!")
     
     def contrastive_loss(self, logits_per_image, logits_per_text):
         """대조 학습 손실"""
@@ -402,7 +341,7 @@ class CLIPLoRATrainer:
     def train(self, train_dataset, val_dataset=None, num_epochs=20):
         """LoRA 훈련 실행"""
         print("="*60)
-        print("[START] CLIP-LoRA Fine-tuning for Seoul Tourist Spots")
+        print("🎯 CLIP-LoRA Fine-tuning for Seoul Tourist Spots")
         print("="*60)
         
         train_loader = DataLoader(
@@ -433,29 +372,30 @@ class CLIPLoRATrainer:
             # 훈련
             train_loss = self.train_epoch(train_loader)
             train_losses.append(train_loss)
-            print(f"[INFO] Train Loss: {train_loss:.4f}")
+            print(f"🔥 Train Loss: {train_loss:.4f}")
             
             # 검증
             if val_loader:
                 val_loss = self.validate(val_loader)
                 val_losses.append(val_loss)
-                print(f"[INFO] Val Loss: {val_loss:.4f}")
+                print(f"📊 Val Loss: {val_loss:.4f}")
                 
                 # 최고 모델 저장
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     self.save_model(f"best_clip_lora_epoch_{epoch+1}.pth")
-                    print(f"[SUCCESS] New best model saved!")
+                    print(f"✅ New best model saved!")
             
             self.scheduler.step()
-            print(f"[INFO] Learning Rate: {self.scheduler.get_last_lr()[0]:.2e}")
+            print(f"📈 Learning Rate: {self.scheduler.get_last_lr()[0]:.2e}")
         
-        print("\n[SUCCESS] LoRA Fine-tuning completed!")
+        print("\n🎉 LoRA Fine-tuning completed!")
         return train_losses, val_losses
     
     def save_model(self, filename):
         """LoRA 모델 저장"""
-        save_path = filename  # 전달받은 경로를 그대로 사용
+        save_path = os.path.join("saved_models", filename)
+        os.makedirs("saved_models", exist_ok=True)
         
         # LoRA 파라미터만 저장
         lora_state_dict = {
@@ -470,169 +410,75 @@ class CLIPLoRATrainer:
             'optimizer_state_dict': self.optimizer.state_dict(),
         }, save_path)
         
-        print(f"[SUCCESS] LoRA model saved: {save_path}")
+        print(f"💾 LoRA model saved: {save_path}")
 
 def main():
-    # 테스트 모드 설정 (환경변수 또는 인자로 제어)
-    import sys
-    TEST_MODE = '--test' in sys.argv or os.environ.get('CLIP_TEST_MODE', '').lower() == 'true'
-    
-    # 학습 모드 선택
-    print("="*60)
-    print("🎯 CLIP-LoRA 학습 모드 선택")
-    print("="*60)
-    print("1. 처음부터 새로 학습 (기존 모델 무시)")
-    print("2. 기존 모델에 이어서 학습 (권장)")
-    print("="*60)
-    
-    while True:
-        try:
-            choice = input("선택하세요 (1 또는 2): ").strip()
-            if choice in ['1', '2']:
-                break
-            else:
-                print("❌ 잘못된 선택입니다. 1 또는 2를 입력하세요.")
-        except KeyboardInterrupt:
-            print("\n\n❌ 사용자가 취소했습니다.")
-            return
-        except:
-            print("❌ 잘못된 입력입니다. 1 또는 2를 입력하세요.")
-    
-    CONTINUE_TRAINING = (choice == '2')
-    
-    if CONTINUE_TRAINING:
-        print("\n✅ 기존 모델에 이어서 학습을 시작합니다!")
-        print("📝 독립문과 서울도서관 데이터가 추가로 학습됩니다.")
-    else:
-        print("\n✅ 처음부터 새로 학습을 시작합니다!")
-        print("📝 모든 장소 데이터가 처음부터 학습됩니다.")
-    
-    if TEST_MODE:
-        print("테스트 모드로 실행됩니다!")
-        print("빠른 테스트를 위해 설정이 조정됩니다.")
-        NUM_EPOCHS = 2  # 테스트용: 2 에포크만
-        BATCH_SIZE = 4  # 테스트용: 작은 배치 크기
-        LEARNING_RATE = 1e-3  # 테스트용: 높은 학습률
-        RANK = 8  # 테스트용: 작은 LoRA rank
-        ALPHA = 16  # 테스트용: 작은 alpha
-        SAVE_PREFIX = "test_"  # 테스트 모델임을 표시
-    else:
-        print("프로덕션 모드로 실행됩니다!")
-        NUM_EPOCHS = 20
-        BATCH_SIZE = 8
-        LEARNING_RATE = 1e-4
-        RANK = 16
-        ALPHA = 32
-        SAVE_PREFIX = ""
-    
     # 데이터셋 준비
     data_path = "database_images"
     
-    if not os.path.exists(data_path):
-        print(f"[ERROR] 데이터 경로를 찾을 수 없습니다: {data_path}")
-        print("[INFO] 먼저 download_success_images.py를 실행하여 학습 데이터를 준비하세요.")
-        return
+    # CLIP 전처리 사용
+    _, preprocess = clip.load("ViT-B/32")
     
-    print(f"데이터셋 로딩: {data_path}")
-    
-    # 트레이너 초기화 (CLIP 모델 로드도 여기서 처리됨)
-    trainer = CLIPLoRATrainer(
-        rank=RANK, 
-        alpha=ALPHA, 
-        learning_rate=LEARNING_RATE, 
-        batch_size=BATCH_SIZE
-    )
-    
-    # 기존 모델 로드 (선택한 경우)
-    if CONTINUE_TRAINING:
-        print("\n" + "="*60)
-        print("🔄 기존 모델 로드 중...")
-        print("="*60)
-        
-        # 기존 모델 파일 경로들
-        model_files = [
-            "fine_tuned_model/best_model.pth",
-            "fine_tuned_model/final_model.pth",
-            "fine_tuned_model/test_final_model.pth"
-        ]
-        
-        model_loaded = False
-        for model_file in model_files:
-            if os.path.exists(model_file):
-                print(f"🔍 모델 파일 발견: {model_file}")
-                if trainer.load_existing_model(model_file):
-                    print(f"✅ 기존 모델 로드 성공!")
-                    model_loaded = True
-                    break
-                else:
-                    print(f"❌ {model_file} 로드 실패")
-        
-        if not model_loaded:
-            print("⚠️  기존 모델을 찾을 수 없습니다.")
-            print("🔄 처음부터 새로 학습을 시작합니다.")
-        
-        print("="*60)
-    
-    # 트레이너에서 전처리 파이프라인 가져오기
-    preprocess = trainer.preprocess
-    
-    # 데이터셋 생성
-    train_dataset = SeoulTouristDataset(
-        data_path=data_path, 
+    # 전체 데이터셋 생성 (증강 활성화)
+    full_dataset = SeoulTouristDataset(
+        data_path=data_path,
         transform=preprocess,
         augment=True,
         is_validation=False
     )
     
-    # 검증 데이터셋 (증강 없이)
-    val_dataset = SeoulTouristDataset(
-        data_path=data_path,
-        transform=preprocess, 
-        augment=False,
-        is_validation=True
-    )
-    
-    if len(train_dataset) == 0:
-        print("[ERROR] 학습 데이터가 없습니다!")
+    if len(full_dataset) == 0:
+        print("❌ No data found!")
         return
     
-    print(f"Train samples: {len(train_dataset)}")
-    print(f"Validation samples: {len(val_dataset)}")
+    # 훈련/검증 분할 (80:20)
+    train_size = int(0.8 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
     
-    # 학습 실행
-    print(f"\n학습 시작! (에포크: {NUM_EPOCHS}, 배치 크기: {BATCH_SIZE})")
-    print(f"🎯 학습 모드: {'기존 모델 이어서 학습' if CONTINUE_TRAINING else '처음부터 새로 학습'}")
-    trainer.train(train_dataset, val_dataset, num_epochs=NUM_EPOCHS)
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        full_dataset, [train_size, val_size],
+        generator=torch.Generator().manual_seed(42)
+    )
     
-    # 모델 저장 파일명 설정
-    mode_prefix = "continue_" if CONTINUE_TRAINING else "new_"
-    model_filename = f"{SAVE_PREFIX}{mode_prefix}best_model.pth"
-    final_filename = f"{SAVE_PREFIX}{mode_prefix}final_model.pth"
+    # 검증 데이터셋은 증강 비활성화
+    val_dataset.dataset.augment = False
+    val_dataset.dataset.is_validation = True
     
-    trainer.save_model(f"fine_tuned_model/{model_filename}")
-    print(f"[SUCCESS] 모델 저장 완료: fine_tuned_model/{model_filename}")
+    print(f"\n📊 Dataset Split:")
+    print(f"  - Training: {len(train_dataset)} samples")
+    print(f"  - Validation: {len(val_dataset)} samples")
     
-    # 최종 모델도 저장
-    torch.save({
-        'model_state_dict': trainer.model.state_dict(),
-        'rank': RANK,
-        'alpha': ALPHA,
-        'epoch': NUM_EPOCHS,
-        'test_mode': TEST_MODE,
-        'continue_training': CONTINUE_TRAINING,
-        'training_mode': 'continue' if CONTINUE_TRAINING else 'new'
-    }, f"fine_tuned_model/{final_filename}")
+    # LoRA 훈련 (더 작은 배치 사이즈와 학습률 사용)
+    trainer = CLIPLoRATrainer(
+        rank=8,            # 더 작은 rank 사용
+        alpha=16,          # 더 작은 alpha 사용
+        learning_rate=5e-5, # 더 작은 학습률
+        batch_size=4       # 더 작은 배치 크기
+    )
     
-    print(f"[SUCCESS] 최종 모델 저장 완료: fine_tuned_model/{final_filename}")
+    train_losses, val_losses = trainer.train(
+        train_dataset, 
+        val_dataset, 
+        num_epochs=20      # 에포크 수 감소
+    )
     
-    if TEST_MODE:
-        print("\n[INFO] 테스트 완료!")
-        print("[INFO] 실제 학습을 위해서는 --test 옵션 없이 실행하세요.")
-    else:
-        print("\n[SUCCESS] 학습 완료!")
-        print(f"[INFO] 학습 모드: {'기존 모델 이어서 학습' if CONTINUE_TRAINING else '처음부터 새로 학습'}")
-        print(f"[INFO] 저장된 모델: {model_filename}, {final_filename}")
-        print("[INFO] 새로운 모델을 사용하려면 API 서버를 재시작하세요.")
+    # 결과 저장
+    results = {
+        'method': 'CLIP-LoRA with Tourist Photo Augmentation',
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'rank': 8,
+        'alpha': 16,
+        'augmentation_settings': {
+            'image_augmentation': 'moderate',
+            'text_variations_per_image': 2
+        }
+    }
+    
+    with open('clip_lora_augmented_results.json', 'w', encoding='utf-8') as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    
+    print("📈 Results saved to clip_lora_augmented_results.json")
 
 if __name__ == "__main__":
     main() 
