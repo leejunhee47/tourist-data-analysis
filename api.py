@@ -9,7 +9,7 @@ from clip_lora_inference import CLIPLoRAInference
 from typing import List, Optional
 from pydantic import BaseModel
 from firebase_admin import firestore
-from firebase_config import initialize_firebase, USERS_COLLECTION, GAME_SESSIONS_COLLECTION, VISITS_COLLECTION
+from firebase_config import initialize_firebase, USERS_COLLECTION, GAME_SESSIONS_COLLECTION, VISITS_COLLECTION, REVIEWS_COLLECTION, DAILY_QUESTS_COLLECTION
 from quest_system import (
     generate_daily_quests, 
     check_quest_completion, 
@@ -20,6 +20,7 @@ from quest_system import (
     create_history_quiz_quests  # 복수형 함수 import
 )
 from fastapi.staticfiles import StaticFiles
+from place_config import PLACE_COORDINATES, calculate_distance_km
 
 app = FastAPI()
 
@@ -41,12 +42,30 @@ db = initialize_firebase()
 if not db:
     raise Exception("실패")
 
+
+
 # 임시 이미지 저장 폴더 생성
 TEMP_DIR = "temp_images"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# CLIP-LoRA 모델 초기화
-inferencer = CLIPLoRAInference()
+# CLIP-LoRA 모델 초기화 (지연 로딩)
+print(" 서버 시작 중...")
+inferencer = None  # 전역 변수로 선언
+
+def initialize_model():
+    """AI 모델을 초기화하는 함수"""
+    global inferencer
+    try:
+        print("🤖 AI 모델 로딩 중...")
+        inferencer = CLIPLoRAInference()
+        print("✅ AI 모델 로딩 완료!")
+        return True
+    except Exception as e:
+        print(f"❌ AI 모델 로딩 실패: {e}")
+        return False
+
+# 서버 시작 시에는 모델 로딩하지 않음 (첫 요청 시 로딩)
+print("✅ 서버 시작 완료! (모델은 첫 요청 시 로딩됩니다)")
 
 # Pydantic 모델들
 # ▼▼▼ [수정] profile_image_url 필드 추가 ▼▼▼
@@ -92,6 +111,23 @@ class QuizAnswerRequest(BaseModel):
 
 class QuizQuestCreateRequest(BaseModel):
     user_id: str
+
+# ▼▼▼ [신규] 리뷰 관련 모델 추가 ▼▼▼
+class ReviewRequest(BaseModel):
+    user_id: str
+    place_name: str
+    review_text: str
+    image_url: Optional[str] = None
+
+class ReviewResponse(BaseModel):
+    review_id: str
+    user_id: str
+    place_name: str
+    review_text: str
+    image_url: Optional[str] = None
+    created_at: str
+    score_earned: int
+    message: str
 
 # 사용자 생성
 @app.post("/create_user/")
@@ -197,14 +233,20 @@ async def predict_location(
     latitude: float = Form(...),
     longitude: float = Form(...)
 ):
+    # 모델이 로드되지 않았으면 로딩
+    global inferencer
+    if inferencer is None:
+        print("🔄 첫 요청 시 모델 로딩 중...")
+        if not initialize_model():
+            raise HTTPException(status_code=500, detail="AI 모델 로딩에 실패했습니다.")
     
     # 1) 타깃 관광지 좌표 확인
-    if target_place not in inferencer.place_coords:
+    if target_place not in PLACE_COORDINATES:
         raise HTTPException(status_code=400, detail="알 수 없는 타깃 관광지입니다.")
-    target_lat, target_lon = inferencer.place_coords[target_place]
+    target_lat, target_lon = PLACE_COORDINATES[target_place]
 
-    # 2) 거리 계산 (CLIPLoRAInference.calculate_distance는 km 단위 반환)
-    distance_km = inferencer.calculate_distance(latitude, longitude, target_lat, target_lon)
+    # 2) 거리 계산 (km 단위 반환)
+    distance_km = calculate_distance_km(latitude, longitude, target_lat, target_lon)
     distance_m = distance_km * 1000  # m 단위로 변환
     
     # 3) 반경 100m 초과 시 즉시 인증 실패
@@ -490,11 +532,14 @@ async def get_places():
     """서버에 설정된 모든 관광지의 이름과 좌표를 반환합니다."""
     try:
         places_data = []
-        for name, (lat, lon) in inferencer.place_coords.items():
+        for name, (lat, lon) in PLACE_COORDINATES.items():
             places_data.append(Place(name=name, latitude=lat, longitude=lon))
         
+        print(f"📍 관광지 좌표 반환: {len(places_data)}개 장소")
         return PlacesResponse(places=places_data)
     except Exception as e:
+        print(f"ERROR: 관광지 좌표 조회 중 오류 발생: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== 퀘스트 시스템 엔드포인트 ====================
@@ -632,7 +677,7 @@ async def create_quiz_quest_endpoint(request: QuizQuestCreateRequest):
         db = initialize_firebase()
         if not db:
             raise Exception("Firebase 데이터베이스 연결에 실패했습니다.")
-        quests_ref = db.collection("daily_quests")
+        quests_ref = db.collection(DAILY_QUESTS_COLLECTION)
         saved_quests = []
         for quest_data in quiz_quests:
             quests_ref.document(quest_data['quest_id']).set(quest_data)
@@ -644,6 +689,127 @@ async def create_quiz_quest_endpoint(request: QuizQuestCreateRequest):
     except Exception as e:
         print(f"ERROR: 퀴즈 퀘스트 생성 중 오류 발생: {e}")
         import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ▼▼▼ [신규] 리뷰 저장 API 엔드포인트 추가 ▼▼▼
+@app.post("/reviews/", response_model=ReviewResponse)
+async def submit_review(review_data: ReviewRequest):
+    """
+    관광지 리뷰를 저장하고 보상 점수를 지급합니다.
+    - 20자 이상의 리뷰 작성 시 +20점 추가
+    """
+    try:
+        # 리뷰 텍스트 길이 검증
+        if len(review_data.review_text.strip()) < 20:
+            raise HTTPException(
+                status_code=400, 
+                detail="리뷰는 20자 이상 작성해주세요."
+            )
+        
+        # Firebase 연결 확인
+        if not db:
+            raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
+        
+        # 사용자 존재 확인
+        user_ref = db.collection(USERS_COLLECTION).document(review_data.user_id)
+        user_doc = user_ref.get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        
+        # 리뷰 ID 생성
+        review_id = f"review_{uuid.uuid4().hex[:8]}"
+        
+        # 현재 시간
+        now = datetime.now()
+        
+        # 리뷰 데이터 준비
+        review_doc = {
+            "review_id": review_id,
+            "user_id": review_data.user_id,
+            "place_name": review_data.place_name,
+            "review_text": review_data.review_text,
+            "image_url": review_data.image_url,
+            "created_at": now.isoformat(),
+            "score_earned": 20
+        }
+        
+        # Firestore 트랜잭션으로 리뷰 저장 및 점수 업데이트
+        @firestore.transactional
+        def save_review_transaction(transaction, review_doc, user_ref):
+            # 리뷰 저장
+            reviews_ref = db.collection(REVIEWS_COLLECTION)
+            transaction.set(reviews_ref.document(review_id), review_doc)
+            
+            # 사용자 점수 업데이트 (+20점)
+            transaction.update(user_ref, {
+                'total_score': firestore.Increment(20),
+                'last_review_at': now
+            })
+            
+            return review_doc
+        
+        # 트랜잭션 실행
+        transaction = db.transaction()
+        saved_review = save_review_transaction(transaction, review_doc, user_ref)
+        
+        print(f"리뷰 저장 완료: {review_id} (사용자: {review_data.user_id}, 장소: {review_data.place_name})")
+        
+        return ReviewResponse(
+            review_id=review_id,
+            user_id=review_data.user_id,
+            place_name=review_data.place_name,
+            review_text=review_data.review_text,
+            image_url=review_data.image_url,
+            created_at=now.isoformat(),
+            score_earned=20,
+            message="리뷰가 성공적으로 저장되었습니다! +20점 획득!"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR: 리뷰 저장 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ▼▼▼ [신규] 리뷰 목록 조회 API 엔드포인트 추가 ▼▼▼
+@app.get("/reviews/{user_id}")
+async def get_user_reviews(user_id: str):
+    """
+    특정 사용자의 모든 리뷰를 조회합니다.
+    - 생성일 기준 내림차순 정렬
+    """
+    try:
+        # Firebase 연결 확인
+        if not db:
+            raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
+        
+        # 사용자 존재 확인
+        user_ref = db.collection(USERS_COLLECTION).document(user_id)
+        user_doc = user_ref.get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        
+        # 리뷰 조회 (user_id로 필터링, created_at 내림차순 정렬)
+        reviews_ref = db.collection(REVIEWS_COLLECTION)
+        reviews_query = reviews_ref.where('user_id', '==', user_id).order_by('created_at', direction=firestore.Query.DESCENDING)
+        
+        reviews = []
+        for doc in reviews_query.stream():
+            review_data = doc.to_dict()
+            reviews.append(review_data)
+        
+        return {
+            "user_id": user_id,
+            "reviews": reviews,
+            "total_reviews": len(reviews)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR: 리뷰 조회 중 오류 발생: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 

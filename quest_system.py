@@ -4,11 +4,7 @@ from enum import Enum
 import random
 import uuid
 from firebase_admin import firestore
-from firebase_config import initialize_firebase, USERS_COLLECTION
-
-# 퀘스트 관련 컬렉션 이름 상수
-DAILY_QUESTS_COLLECTION = 'daily_quests'
-QUIZ_COLLECTION = 'quizzes'
+from firebase_config import initialize_firebase, USERS_COLLECTION, DAILY_QUESTS_COLLECTION, VISITS_COLLECTION
 
 # 퀘스트 타입 정의
 class QuestType(Enum):
@@ -139,7 +135,7 @@ PLACE_THEMES = {
     },
     '전통_문화': {
         'name': '전통과 문화',
-        'description': '한국의 전통 문화를 체험할 수 있는 장소를 탐방하세요',
+        'description': '한국의 문화와 전통을 체험할 수 있는 장소를 탐방하세요',
         'places': ['북촌한옥마을', '서울도서관', '독립문'],
         'color': '#FFD700'  # 금색
     }
@@ -219,7 +215,7 @@ def create_first_visit_quest(user_id: str, db) -> Dict[str, Any]:
     - db: 파이어스토어 DB 객체
     - 사용자가 방문하지 않은 관광지 중 1곳 방문 미션 생성
     """
-    visits_ref = db.collection('visits')
+    visits_ref = db.collection(VISITS_COLLECTION)
     user_visits = visits_ref.where('user_id', '==', user_id).get()  # 사용자의 방문 기록 조회
     visited_places = set()
     for visit in user_visits:
@@ -256,7 +252,7 @@ def create_first_visit_quest_excluding_theme(user_id: str, db, theme_mission_que
     - 테마 미션에서 선택된 관광지를 제외하고 첫 방문 미션 생성
     """
     # 사용자의 방문 기록 조회
-    visits_ref = db.collection('visits')
+    visits_ref = db.collection(VISITS_COLLECTION)
     user_visits = visits_ref.where('user_id', '==', user_id).get()
     visited_places = set()
     for visit in user_visits:
@@ -501,11 +497,8 @@ def check_quest_completion(user_id: str, visited_place: str) -> List[Dict[str, A
 
 def submit_quiz_answer(user_id: str, quest_id: str, answer_index: int) -> Dict[str, Any]:
     """
-    퀴즈 퀘스트 정답 제출 및 결과 처리
-    - user_id: 사용자 ID
-    - quest_id: 퀘스트 ID
-    - answer_index: 사용자가 선택한 답변 인덱스
-    - 정답 여부, 획득 점수 등 결과 반환
+    퀴즈 퀘스트 정답 제출 및 결과 처리 (수정됨)
+    - 오답 시 DB를 변경하지 않아 재시도 가능하도록 함
     """
     db = initialize_firebase()
     if not db:
@@ -519,20 +512,20 @@ def submit_quiz_answer(user_id: str, quest_id: str, answer_index: int) -> Dict[s
         return {"error": "Not a quiz quest"}
     if quest_data.get('is_answered', False):
         return {"error": "Quiz already answered"}
-    is_correct = (answer_index == quest_data['correct_answer'])  # 정답 여부 판별
-    points_earned = quest_data['points'] if is_correct else 0    # 정답 시 점수 획득
-    # 퀘스트 상태 및 결과 DB 업데이트
-    quest_ref.update({
-        'is_answered': True,
-        'user_answer': answer_index,
-        'is_correct': is_correct,
-        'status': QuestStatus.REWARD_READY.value if is_correct else QuestStatus.FAILED.value,  # 정답 시 보상 받을 준비 상태로 변경
-        'completed_at': firestore.SERVER_TIMESTAMP
-    })
-    
-    # 정답일 경우 즉시 점수 지급하지 않고 보상 지급 시에만 지급
+
+    is_correct = (answer_index == quest_data['correct_answer'])
+    points_earned = quest_data['points'] if is_correct else 0
+
     if is_correct:
-        # 실제 Firestore에서 최신 총점 확인
+        # 정답일 경우에만 DB를 업데이트합니다.
+        quest_ref.update({
+            'is_answered': True,
+            'user_answer': answer_index,
+            'is_correct': True,
+            'status': QuestStatus.REWARD_READY.value,
+            'completed_at': firestore.SERVER_TIMESTAMP
+        })
+        
         user_ref = db.collection(USERS_COLLECTION).document(user_id)
         user_doc = user_ref.get()
         actual_total_score = user_doc.to_dict().get('total_score', 0)
@@ -543,6 +536,8 @@ def submit_quiz_answer(user_id: str, quest_id: str, answer_index: int) -> Dict[s
         print(f"   보상 지급 시 +20점을 받을 수 있습니다.")
         print(f"   현재 총점: {actual_total_score}점 (Firestore 확인)")
         print(f"   ──────────────────────────────")
+    # 오답일 경우, DB 업데이트를 하지 않아 사용자가 다시 시도할 수 있습니다.
+    
     return {
         "quest_id": quest_id,
         "is_correct": is_correct,
@@ -601,7 +596,7 @@ def claim_quest_reward(user_id: str, quest_id: str) -> Dict[str, Any]:
     })
 
     # 모든 퀘스트에 대해 점수 지급 (퀴즈도 포함)
-    user_ref = db.collection('users').document(user_id)
+    user_ref = db.collection(USERS_COLLECTION).document(user_id)
     
     # 트랜잭션을 사용하여 안전하게 점수 업데이트
     @firestore.transactional
@@ -728,4 +723,4 @@ def get_quest_progress(user_id: str) -> Dict[str, Any]:
         "claimed_quests": claimed_quests,
         "available_reward": available_reward,
         "progress_percentage": (reward_ready_quests + claimed_quests) / total_quests * 100 if total_quests > 0 else 0
-    } 
+    }
