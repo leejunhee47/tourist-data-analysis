@@ -8,7 +8,7 @@ from datetime import datetime
 from clip_lora_inference import CLIPLoRAInference
 from typing import List, Optional
 from pydantic import BaseModel
-from firebase_admin import firestore
+from firebase_admin import firestore, storage
 from firebase_config import initialize_firebase, USERS_COLLECTION, GAME_SESSIONS_COLLECTION, VISITS_COLLECTION, REVIEWS_COLLECTION, DAILY_QUESTS_COLLECTION
 from quest_system import (
     generate_daily_quests, 
@@ -42,7 +42,14 @@ db = initialize_firebase()
 if not db:
     raise Exception("실패")
 
-
+# Firebase Storage 초기화
+try:
+    # bucket 이름을 명시적으로 지정
+    bucket = storage.bucket(name='tourapi-77ca1.firebasestorage.app')
+    print("✅ Firebase Storage 초기화 성공")
+except Exception as e:
+    print(f"❌ Firebase Storage 초기화 실패: {e}")
+    bucket = None
 
 # 임시 이미지 저장 폴더 생성
 TEMP_DIR = "temp_images"
@@ -63,6 +70,103 @@ def initialize_model():
     except Exception as e:
         print(f"❌ AI 모델 로딩 실패: {e}")
         return False
+
+# Firebase Storage 이미지 저장 함수
+def save_image_to_storage(image_path: str, user_id: str, place_name: str, visit_id: str) -> str:
+    """
+    이미지를 Firebase Storage에 저장하고 다운로드 URL을 반환합니다.
+    
+    Args:
+        image_path: 로컬 이미지 파일 경로
+        user_id: 사용자 ID
+        place_name: 방문한 장소명
+        visit_id: 방문 기록 ID
+    
+    Returns:
+        str: Firebase Storage 다운로드 URL
+    """
+    try:
+        print(f"📸 Firebase Storage 이미지 저장 시작...")
+        print(f"   입력 파일: {image_path}")
+        print(f"   사용자 ID: {user_id}")
+        print(f"   장소명: {place_name}")
+        print(f"   방문 ID: {visit_id}")
+        
+        # Firebase Storage bucket 확인
+        if bucket is None:
+            print("❌ Firebase Storage bucket이 초기화되지 않았습니다")
+            return None
+        
+        # 파일 존재 확인
+        if not os.path.exists(image_path):
+            print(f"❌ 이미지 파일이 존재하지 않습니다: {image_path}")
+            return None
+        
+        # 파일 확장자 확인
+        file_extension = os.path.splitext(image_path)[1].lower()
+        if file_extension not in ['.jpg', '.jpeg', '.png', '.gif']:
+            file_extension = '.jpg'  # 기본값
+        
+        # Storage 경로 생성 (success_images 경로에 저장)
+        storage_path = f"success_images/{user_id}/{visit_id}_{place_name}{file_extension}"
+        print(f"   Storage 경로: {storage_path}")
+        
+        # 파일을 Storage에 업로드
+        blob = bucket.blob(storage_path)
+        print(f"   Blob 생성 완료: {blob.name}")
+        
+        blob.upload_from_filename(image_path)
+        print(f"   파일 업로드 완료")
+        
+        # 공개 URL 설정 (읽기 권한)
+        blob.make_public()
+        
+        # 다운로드 URL 반환
+        download_url = blob.public_url
+        
+        print(f"📸 이미지 저장 완료: {storage_path}")
+        print(f"   URL: {download_url}")
+        
+        return download_url
+        
+    except Exception as e:
+        print(f"❌ 이미지 저장 실패: {e}")
+        return None
+
+# 사용자 성공 이미지 조회 함수
+def get_user_success_images(user_id: str) -> List[dict]:
+    """
+    특정 사용자의 모든 성공 이미지를 조회합니다.
+    
+    Args:
+        user_id: 사용자 ID
+    
+    Returns:
+        List[dict]: 성공 이미지 목록
+    """
+    try:
+        # 방문 기록에서 정답을 맞힌 기록만 조회 (인덱스 사용)
+        visits_ref = db.collection(VISITS_COLLECTION)
+        visits = visits_ref.where('user_id', '==', user_id).where('is_correct', '==', True).order_by('visit_time', direction=firestore.Query.DESCENDING).get()
+        
+        success_images = []
+        for visit in visits:
+            visit_data = visit.to_dict()
+            if visit_data.get('image_url'):  # 이미지 URL이 있는 경우만
+                success_images.append({
+                    'visit_id': visit_data.get('visit_id'),
+                    'place_name': visit_data.get('target_place'),
+                    'image_url': visit_data.get('image_url'),
+                    'visit_time': visit_data.get('visit_time'),
+                    'confidence': visit_data.get('confidence', 0),
+                    'score_earned': visit_data.get('score_earned', 0)
+                })
+        
+        return success_images
+        
+    except Exception as e:
+        print(f"❌ 성공 이미지 조회 실패: {e}")
+        return []
 
 # 서버 시작 시에는 모델 로딩하지 않음 (첫 요청 시 로딩)
 print("✅ 서버 시작 완료! (모델은 첫 요청 시 로딩됩니다)")
@@ -278,9 +382,6 @@ async def predict_location(
             user_lon=longitude
         )
         
-        # 임시 파일 삭제
-        os.remove(temp_image_path)
-        
         if results is None:
             return PredictionResponse(
                 predictions=[],
@@ -297,6 +398,34 @@ async def predict_location(
         # 점수 계산
         is_correct = predicted_place == target_place
         score_earned = 10 if is_correct else 0  # 각 관광지 방문 시 10점
+        
+        # 정답을 맞힌 경우에만 이미지를 Firebase Storage에 저장
+        image_url = None
+        if is_correct:
+            print(f"🎉 정답입니다! 이미지 저장을 시작합니다...")
+            # 세션에서 사용자 ID 가져오기
+            session_ref = db.collection(GAME_SESSIONS_COLLECTION).document(session_id)
+            session = session_ref.get()
+            if session.exists:
+                user_id = session.to_dict()['user_id']
+                # 방문 ID 생성 (트랜잭션에서 사용할 예정)
+                visit_id = str(uuid.uuid4())
+                print(f"   사용자 ID: {user_id}")
+                print(f"   방문 ID: {visit_id}")
+                print(f"   장소: {target_place}")
+                print(f"   임시 파일: {temp_image_path}")
+                
+                # 이미지를 Firebase Storage에 저장
+                image_url = save_image_to_storage(temp_image_path, user_id, target_place, visit_id)
+                if image_url is None:
+                    print("⚠️ 이미지 저장 실패했지만 게임은 계속 진행됩니다")
+                else:
+                    print(f"✅ 이미지 저장 성공: {image_url}")
+        else:
+            print(f"❌ 틀렸습니다. 이미지 저장하지 않습니다.")
+        
+        # 임시 파일 삭제
+        os.remove(temp_image_path)
         
         # Firestore 트랜잭션 시작
         transaction = db.transaction()
@@ -337,11 +466,11 @@ async def predict_location(
                 'total_score': new_total_score
             })
             
-            # 방문 기록 저장
+            # 방문 기록 저장 (이미지 URL 포함)
             visit_id = str(uuid.uuid4())
             visit_ref = db.collection(VISITS_COLLECTION).document(visit_id)
             
-            transaction.set(visit_ref, {
+            visit_data = {
                 'visit_id': visit_id,
                 'session_id': session_id,
                 'user_id': user_id,
@@ -353,29 +482,15 @@ async def predict_location(
                 'latitude': latitude,
                 'longitude': longitude,
                 'visit_time': firestore.SERVER_TIMESTAMP
-            })
+            }
+            
+            # 정답을 맞힌 경우에만 이미지 URL 추가
+            if is_correct and image_url:
+                visit_data['image_url'] = image_url
+            
+            transaction.set(visit_ref, visit_data)
             
             return new_session_score, new_total_score
-            
-            # 방문 기록 저장
-            visit_id = str(uuid.uuid4())
-            visit_ref = db.collection(VISITS_COLLECTION).document(visit_id)
-            
-            transaction.set(visit_ref, {
-                'visit_id': visit_id,
-                'session_id': session_id,
-                'user_id': user_id,
-                'target_place': target_place,
-                'predicted_place': predicted_place,
-                'is_correct': is_correct,
-                'score_earned': score_earned,
-                'confidence': confidence,
-                'latitude': latitude,
-                'longitude': longitude,
-                'visit_time': firestore.SERVER_TIMESTAMP
-            })
-            
-            return new_session_score
         
         # 세션에서 사용자 ID 가져오기
         session_ref = db.collection(GAME_SESSIONS_COLLECTION).document(session_id)
@@ -509,13 +624,19 @@ async def get_user_profile(user_id: str):
         visit_history = []
         for visit in visits:
             visit_data = visit.to_dict()
-            visit_history.append({
+            visit_info = {
                 "target_place": visit_data['target_place'],
                 "predicted_place": visit_data['predicted_place'],
                 "is_correct": visit_data['is_correct'],
                 "score_earned": visit_data['score_earned'],
                 "visit_time": visit_data['visit_time']
-            })
+            }
+            
+            # 정답을 맞힌 경우에만 이미지 URL 추가
+            if visit_data['is_correct'] and visit_data.get('image_url'):
+                visit_info['image_url'] = visit_data['image_url']
+            
+            visit_history.append(visit_info)
         
         return UserProfileResponse(
             user_id=user_id,
@@ -813,6 +934,112 @@ async def get_user_reviews(user_id: str):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+# ▼▼▼ [신규] 사용자 성공 이미지 조회 API 엔드포인트 추가 ▼▼▼
+@app.get("/success_images/{user_id}")
+async def get_user_success_images_endpoint(user_id: str):
+    """
+    특정 사용자의 모든 성공 이미지를 조회합니다.
+    - 정답을 맞힌 방문 기록의 이미지만 반환
+    - 방문 시간 기준 내림차순 정렬
+    """
+    try:
+        # Firebase 연결 확인
+        if not db:
+            raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
+        
+        # 사용자 존재 확인
+        user_ref = db.collection(USERS_COLLECTION).document(user_id)
+        user_doc = user_ref.get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        
+        # 성공 이미지 조회
+        success_images = get_user_success_images(user_id)
+        
+        return {
+            "user_id": user_id,
+            "success_images": success_images,
+            "total_count": len(success_images),
+            "message": f"성공 이미지 {len(success_images)}개를 조회했습니다."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR: 성공 이미지 조회 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ▼▼▼ [신규] 사용자 성공 이미지 통계 조회 API 엔드포인트 추가 ▼▼▼
+@app.get("/success_images/{user_id}/stats")
+async def get_user_success_images_stats(user_id: str):
+    """
+    특정 사용자의 성공 이미지 통계를 조회합니다.
+    - 총 성공 횟수, 장소별 성공 횟수 등
+    """
+    try:
+        # Firebase 연결 확인
+        if not db:
+            raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
+        
+        # 사용자 존재 확인
+        user_ref = db.collection(USERS_COLLECTION).document(user_id)
+        user_doc = user_ref.get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        
+        # 성공 이미지 조회
+        success_images = get_user_success_images(user_id)
+        
+        # 통계 계산
+        total_success = len(success_images)
+        place_stats = {}
+        total_score = 0
+        
+        for image in success_images:
+            place_name = image['place_name']
+            if place_name not in place_stats:
+                place_stats[place_name] = 0
+            place_stats[place_name] += 1
+            total_score += image.get('score_earned', 0)
+        
+        # 장소별 성공 횟수 정렬 (내림차순)
+        sorted_places = sorted(place_stats.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            "user_id": user_id,
+            "total_success_count": total_success,
+            "total_score_earned": total_score,
+            "place_stats": [{"place_name": place, "success_count": count} for place, count in sorted_places],
+            "message": f"성공 이미지 통계를 조회했습니다."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR: 성공 이미지 통계 조회 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 서버 종료 시 정리 작업
+@app.on_event("shutdown")
+async def shutdown_event():
+    print("🔄 서버 종료 중...")
+    
+    # 임시 이미지 폴더 정리
+    try:
+        if os.path.exists(TEMP_DIR):
+            for filename in os.listdir(TEMP_DIR):
+                file_path = os.path.join(TEMP_DIR, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            print(f"✅ 임시 이미지 폴더 정리 완료: {TEMP_DIR}")
+    except Exception as e:
+        print(f"❌ 임시 이미지 폴더 정리 실패: {e}")
+    
+    print("✅ 서버 종료 완료!")
+
+# 서버 시작
 if __name__ == "__main__":
     import uvicorn
     import socket
