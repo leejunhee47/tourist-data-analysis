@@ -4,11 +4,7 @@ from enum import Enum
 import random
 import uuid
 from firebase_admin import firestore
-from firebase_config import initialize_firebase, USERS_COLLECTION
-
-# 퀘스트 관련 컬렉션 이름 상수
-DAILY_QUESTS_COLLECTION = 'daily_quests'
-QUIZ_COLLECTION = 'quizzes'
+from firebase_config import initialize_firebase, USERS_COLLECTION, DAILY_QUESTS_COLLECTION, VISITS_COLLECTION
 
 # 퀘스트 타입 정의
 class QuestType(Enum):
@@ -139,7 +135,7 @@ PLACE_THEMES = {
     },
     '전통_문화': {
         'name': '전통과 문화',
-        'description': '한국의 전통 문화를 체험할 수 있는 장소를 탐방하세요',
+        'description': '한국의 문화와 전통을 체험할 수 있는 장소를 탐방하세요',
         'places': ['북촌한옥마을', '서울도서관', '독립문'],
         'color': '#FFD700'  # 금색
     }
@@ -219,7 +215,7 @@ def create_first_visit_quest(user_id: str, db) -> Dict[str, Any]:
     - db: 파이어스토어 DB 객체
     - 사용자가 방문하지 않은 관광지 중 1곳 방문 미션 생성
     """
-    visits_ref = db.collection('visits')
+    visits_ref = db.collection(VISITS_COLLECTION)
     user_visits = visits_ref.where('user_id', '==', user_id).get()  # 사용자의 방문 기록 조회
     visited_places = set()
     for visit in user_visits:
@@ -256,7 +252,7 @@ def create_first_visit_quest_excluding_theme(user_id: str, db, theme_mission_que
     - 테마 미션에서 선택된 관광지를 제외하고 첫 방문 미션 생성
     """
     # 사용자의 방문 기록 조회
-    visits_ref = db.collection('visits')
+    visits_ref = db.collection(VISITS_COLLECTION)
     user_visits = visits_ref.where('user_id', '==', user_id).get()
     visited_places = set()
     for visit in user_visits:
@@ -600,7 +596,7 @@ def claim_quest_reward(user_id: str, quest_id: str) -> Dict[str, Any]:
     })
 
     # 모든 퀘스트에 대해 점수 지급 (퀴즈도 포함)
-    user_ref = db.collection('users').document(user_id)
+    user_ref = db.collection(USERS_COLLECTION).document(user_id)
     
     # 트랜잭션을 사용하여 안전하게 점수 업데이트
     @firestore.transactional

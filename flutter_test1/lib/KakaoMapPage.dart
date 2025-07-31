@@ -1,5 +1,6 @@
 // lib/KakaoMapPage.dart
 
+import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -7,11 +8,13 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'PhotoItem.dart';
 import 'game_data_model.dart';
 import 'quest_model.dart';
+import 'review_model.dart';
 
 class KakaoMapPage extends StatefulWidget {
   final GameData gameData;
@@ -30,6 +33,8 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   final ImagePicker _picker = ImagePicker();
   String? _currentTargetPlace;
   String? _selectedTestPlace;
+  File? _lastMissionImage;
+  Map<String, String> _localImageUrls = {};
 
   // --- Data State (초기화 방식 변경) ---
   late String _userId;
@@ -67,6 +72,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   void initState() {
     super.initState();
     _initializeStateFromGameData();
+    _fetchLocalImageUrls();
     _initializeWebView();
     _selectedTestPlace = targetKeywords.isNotEmpty ? targetKeywords[0] : null;
   }
@@ -245,8 +251,30 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
+  // [추가] 백엔드에서 로컬 이미지 URL 맵을 가져오는 함수
+  Future<void> _fetchLocalImageUrls() async {
+    try {
+      final response =
+          await http.get(Uri.parse('$serverUrl/places/local-images'));
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        if (mounted) {
+          setState(() {
+            _localImageUrls = Map<String, String>.from(data);
+          });
+        }
+      }
+    } catch (e) {
+      print('Error fetching local image URLs: $e');
+    }
+  }
+
   Future<void> _displayTouristPhotos() async {
     if (_touristSpotPhotos.isEmpty || !isMapLoaded) return;
+
+    // 서버 주소 (URL 조합을 위해)
+    final String serverBaseUrl = serverUrl;
+
     for (final photo in _touristSpotPhotos) {
       String? matchedPlace;
       for (final placeName in _placeCoords.keys) {
@@ -265,8 +293,19 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               v['target_place'] == matchedPlace &&
               (v['is_correct'] == true || v['is_correct'] == 1),
         );
+
+        // ▼▼▼ [수정] 이미지 URL 선택 로직 ▼▼▼
+        // 1. 로컬 이미지 맵에서 장소 이름으로 이미지 경로를 찾습니다.
+        final String? localImagePath = _localImageUrls[matchedPlace];
+
+        // 2. 로컬 이미지가 있으면 서버 주소와 결합하고, 없으면 기존 API 이미지를 사용합니다.
+        final String imageUrl = localImagePath != null
+            ? '$serverBaseUrl$localImagePath'
+            : photo.galWebImageUrl;
+        // ▲▲▲ [수정] 이미지 URL 선택 로직 ▲▲▲
+
         final jsCode =
-            "addPhotoMarker(${coords['lat']}, ${coords['lng']}, '${photo.galWebImageUrl}', '${photo.galTitle.replaceAll("'", "\\'")}', '${photo.galContentId}', $isVisited);";
+            "addPhotoMarker(${coords['lat']}, ${coords['lng']}, '$imageUrl', '${photo.galTitle.replaceAll("'", "\\'")}', '${photo.galContentId}', $isVisited);";
         try {
           await _controller.runJavaScript(jsCode);
         } catch (e) {
@@ -346,25 +385,20 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
-  /// 미션 하이라이트(테두리, 메시지)를 제거하는 함수
   Future<void> _clearMissionHighlight() async {
     if (!mounted) return;
-    // 모든 마커의 테두리를 원래 상태(방문/미방문)로 되돌림
     _controller.runJavaScript("resetAllMarkerBorders();").catchError((e) {
       print("JS resetAllMarkerBorders 호출 오류: $e");
     });
-    // 마커 위의 '현재 미션' 텍스트를 숨김
     _controller.runJavaScript("hideMissionText();").catchError((e) {
       print("JS hideMissionText 호출 오류: $e");
     });
-    // 현재 선택된 미션 상태를 초기화
     setState(() {
       _currentTargetPlace = null;
     });
   }
 
   Future<void> _submitPrediction(File imageFile, String targetPlace) async {
-    // 예측 제출 직전에 하이라이트와 메시지를 제거
     await _clearMissionHighlight();
 
     if (currentPosition == null) {
@@ -420,6 +454,17 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           _fetchUserProfile();
           _fetchRankings();
           _fetchQuestsAndProgress();
+
+          if (isCorrect) {
+            setState(() {
+              _lastMissionImage = imageFile;
+            });
+            Future.delayed(const Duration(seconds: 3), () {
+              if (mounted) {
+                _promptForReview(targetPlace);
+              }
+            });
+          }
         }
       } else {
         throw Exception(responseData['detail'] ?? '서버에서 오류가 발생했습니다.');
@@ -458,12 +503,9 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         maxWidth: 1920,
         imageQuality: 85,
       );
-      // 이미지를 성공적으로 선택한 경우
       if (image != null) {
         await _submitPrediction(File(image.path), _currentTargetPlace!);
-      }
-      // 사용자가 이미지 선택을 취소한 경우
-      else {
+      } else {
         print("이미지 선택이 취소되었습니다.");
         await _clearMissionHighlight();
       }
@@ -554,7 +596,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   Future<void> _pickImage() async {
     showModalBottomSheet(
       context: context,
-      // isDismissible: false를 추가하여 바깥쪽 탭으로 닫히지 않게 함
       isDismissible: false,
       enableDrag: false,
       builder: (ctx) => SafeArea(
@@ -569,21 +610,19 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                 _getImage(ImageSource.camera);
               },
             ),
-            // ListTile(
-            //   leading: const Icon(Icons.photo_library),
-            //   title: const Text('앨범에서 선택'),
-            //   onTap: () {
-            //     Navigator.pop(ctx);
-            //     _getImage(ImageSource.gallery);
-            //   },
-            // ),
-            // 취소 버튼 추가
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('앨범에서 선택'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _getImage(ImageSource.gallery);
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.close),
               title: const Text('취소'),
               onTap: () {
                 Navigator.pop(ctx);
-                // 사용자가 명시적으로 취소했으므로 하이라이트 제거
                 _clearMissionHighlight();
               },
             ),
@@ -952,11 +991,48 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                               itemCount: displayList.length,
                               itemBuilder: (context, index) {
                                 final photo = displayList[index];
+
+                                // ▼▼▼ [수정] 이미지 URL과 제목을 결정하기 위한 로직 수정 ▼▼▼
+                                String? matchedPlace;
+                                // 1. 사진 정보와 일치하는 장소 이름을 찾습니다. (지도와 동일한 로직)
+                                for (final placeName in _placeCoords.keys) {
+                                  if (photo.galTitle.contains(placeName) ||
+                                      photo.galSearchKeyword
+                                          .contains(placeName) ||
+                                      photo.galPhotographyLocation
+                                          .contains(placeName)) {
+                                    matchedPlace = placeName;
+                                    break;
+                                  }
+                                }
+
                                 final isVisited = _visitHistory.any((visit) =>
                                     (visit['is_correct'] == true ||
                                         visit['is_correct'] == 1) &&
                                     photo.galTitle
                                         .contains(visit['target_place']));
+
+                                // 2. 로컬 이미지 경로를 가져옵니다.
+                                final String? localImagePath =
+                                    matchedPlace != null
+                                        ? _localImageUrls[matchedPlace]
+                                        : null;
+
+                                // 3. 최종 이미지 URL과 제목을 결정합니다.
+                                final String finalImageUrl;
+                                final String finalTitle;
+
+                                if (localImagePath != null) {
+                                  // 로컬 이미지가 있으면 로컬 이미지와 장소 이름 사용
+                                  finalImageUrl = '$serverUrl$localImagePath';
+                                  finalTitle = matchedPlace!; // 장소 이름을 제목으로 사용
+                                } else {
+                                  // 로컬 이미지가 없으면 API 이미지와 제목 사용
+                                  finalImageUrl = photo.galWebImageUrl;
+                                  finalTitle = photo.galTitle; // 원래 API 제목 사용
+                                }
+                                // ▲▲▲ [수정] 로직 종료 ▲▲▲
+
                                 return Card(
                                   clipBehavior: Clip.antiAlias,
                                   elevation: 3,
@@ -969,12 +1045,11 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                       Expanded(
                                         child: (!showWeekly || isVisited)
                                             ? Image.network(
-                                                photo.galWebImageUrl,
+                                                finalImageUrl, // [수정] finalImageUrl 사용
                                                 fit: BoxFit.cover,
                                                 errorBuilder: (c, e, s) =>
                                                     errorBuilder(
-                                                        photo.galWebImageUrl,
-                                                        e))
+                                                        finalImageUrl, e))
                                             : ColorFiltered(
                                                 colorFilter: const ColorFilter
                                                     .matrix(<double>[
@@ -1000,19 +1075,17 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                                   0,
                                                 ]),
                                                 child: Image.network(
-                                                    photo.galWebImageUrl,
+                                                    finalImageUrl,
                                                     fit: BoxFit.cover,
                                                     errorBuilder: (c, e, s) =>
                                                         errorBuilder(
-                                                            photo
-                                                                .galWebImageUrl,
-                                                            e)),
+                                                            finalImageUrl, e)),
                                               ),
                                       ),
                                       Padding(
                                         padding: const EdgeInsets.all(8.0),
                                         child: Text(
-                                          photo.galTitle,
+                                          finalTitle,
                                           textAlign: TextAlign.center,
                                           style: const TextStyle(
                                               fontSize: 13,
@@ -1042,6 +1115,177 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
+  // [추가] 장소별 리뷰 목록을 가져오는 함수
+  Future<List<Review>> _fetchPlaceReviews(String placeName) async {
+    try {
+      final encodedPlaceName = Uri.encodeComponent(placeName);
+      final response = await http
+          .get(Uri.parse('$serverUrl/reviews/place/$encodedPlaceName'));
+      if (response.statusCode == 200) {
+        final List<dynamic> reviewList =
+            json.decode(utf8.decode(response.bodyBytes));
+        return reviewList.map((json) => Review.fromJson(json)).toList();
+      } else {
+        throw Exception('Failed to load reviews for $placeName');
+      }
+    } catch (e) {
+      print("장소별 리뷰 로딩 오류: $e");
+      return [];
+    }
+  }
+
+  // [추가] 날짜 포맷팅을 위한 헬퍼 함수
+  String _formatReviewDate(String isoString) {
+    try {
+      final dateTime = DateTime.parse(isoString);
+      return DateFormat('yyyy.MM.dd HH:mm').format(dateTime);
+    } catch (e) {
+      return isoString;
+    }
+  }
+
+  // [추가] 특정 장소에 대한 나의 리뷰만 가져오는 함수
+  Future<List<Review>> _fetchMyPlaceReviews(String placeName) async {
+    try {
+      final encodedPlaceName = Uri.encodeComponent(placeName);
+      final response = await http.get(Uri.parse(
+          '$serverUrl/reviews/user/$_userId/place/$encodedPlaceName'));
+      if (response.statusCode == 200) {
+        final List<dynamic> reviewList =
+            json.decode(utf8.decode(response.bodyBytes));
+        return reviewList.map((json) => Review.fromJson(json)).toList();
+      } else {
+        throw Exception('Failed to load my reviews for $placeName');
+      }
+    } catch (e) {
+      print("나의 장소별 리뷰 로딩 오류: $e");
+      return [];
+    }
+  }
+
+  // [추가] 특정 장소에 대한 나의 리뷰를 보여주는 다이얼로그
+  void _showMyPlaceReviewsDialog(String placeName) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text('\'$placeName\'에 대한 나의 리뷰'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: FutureBuilder<List<Review>>(
+              future: _fetchMyPlaceReviews(placeName),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return const Center(child: Text('리뷰를 불러오는 데 실패했습니다.'));
+                }
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      '이 장소에 대한 리뷰를 아직 작성하지 않았습니다.',
+                      textAlign: TextAlign.center,
+                    ),
+                  );
+                }
+
+                final reviews = snapshot.data!;
+                return ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: reviews.length,
+                  itemBuilder: (context, index) {
+                    final review = reviews[index];
+                    final userInfo = review.userInfo;
+                    final userImageUrl = userInfo.profileImageUrl;
+
+                    final String? reviewImageUrl = review.imageUrl;
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      clipBehavior: Clip.antiAlias,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (reviewImageUrl != null &&
+                              reviewImageUrl.isNotEmpty)
+                            Image.network(
+                              reviewImageUrl,
+                              width: double.infinity,
+                              height: 150,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Container(
+                                  height: 150,
+                                  color: Colors.grey[200],
+                                  alignment: Alignment.center,
+                                  child: const Icon(Icons.broken_image,
+                                      color: Colors.grey),
+                                );
+                              },
+                            ),
+                          ListTile(
+                            leading: CircleAvatar(
+                              radius: 20,
+                              backgroundColor: Colors.grey[200],
+                              child: userImageUrl != null &&
+                                      userImageUrl.isNotEmpty
+                                  ? ClipOval(
+                                      child: Image.network(
+                                        userImageUrl,
+                                        fit: BoxFit.cover,
+                                        width: 40,
+                                        height: 40,
+                                        errorBuilder: (c, e, s) => const Icon(
+                                            Icons.person,
+                                            color: Colors.grey),
+                                      ),
+                                    )
+                                  : const Icon(Icons.person,
+                                      color: Colors.grey),
+                            ),
+                            title: Text(userInfo.username,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 8.0),
+                              child: Text(review.reviewText),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                _formatReviewDate(review.createdAt),
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('닫기'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _showPhotoDetail(PhotoItem photo) {
     final matchedPlace = targetKeywords.firstWhere(
       (p) => photo.galTitle.contains(p),
@@ -1052,6 +1296,12 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           visit['target_place'] == matchedPlace &&
           (visit['is_correct'] == true || visit['is_correct'] == 1),
     );
+
+    final String? localImagePath = _localImageUrls[matchedPlace];
+    final String finalImageUrl = localImagePath != null
+        ? '$serverUrl$localImagePath'
+        : photo.galWebImageUrl;
+
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -1076,87 +1326,201 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                     onPressed: () => Navigator.of(context).pop())
               ],
             ),
-            SingleChildScrollView(
-              child: Column(
-                children: [
-                  Image.network(
-                    photo.galWebImageUrl,
-                    fit: BoxFit.contain,
-                    errorBuilder: (c, e, s) => Container(
-                      height: 200,
-                      color: Colors.grey[300],
-                      child: const Center(
-                          child: Icon(Icons.broken_image,
-                              size: 80, color: Colors.grey)),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height *
+                            0.4, // 화면 높이의 40%로 제한
+                      ),
+                      // [수정] photo.galWebImageUrl 대신 finalImageUrl 사용
+                      child: Image.network(
+                        finalImageUrl,
+                        fit: BoxFit.contain,
+                        errorBuilder: (c, e, s) => Container(
+                          height: 200,
+                          color: Colors.grey[300],
+                          child: const Center(
+                              child: Icon(Icons.broken_image,
+                                  size: 80, color: Colors.grey)),
+                        ),
+                      ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Title: ${photo.galTitle}',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 16)),
-                        const SizedBox(height: 8),
-                        Text('위치: ${photo.galPhotographyLocation}'),
-                        const SizedBox(height: 16),
-                        if (matchedPlace.isNotEmpty)
-                          Center(
-                            child: ElevatedButton.icon(
-                              icon: Icon(isVisited
-                                  ? Icons.check_circle
-                                  : Icons.flag_outlined),
-                              label:
-                                  Text(isVisited ? '다시 인증하기' : '이 장소로 미션 시작'),
-                              onPressed: () {
-                                Navigator.of(context).pop();
-                                Future.delayed(
-                                    const Duration(milliseconds: 100), () {
-                                  if (mounted) {
-                                    setState(() {
-                                      _currentTargetPlace = matchedPlace;
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Title: ${photo.galTitle}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 16)),
+                          const SizedBox(height: 8),
+                          Text('위치: ${photo.galPhotographyLocation}'),
+                          const SizedBox(height: 16),
+                          if (matchedPlace.isNotEmpty)
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                ElevatedButton.icon(
+                                  icon: Icon(isVisited
+                                      ? Icons.check_circle
+                                      : Icons.flag_outlined),
+                                  label: Text(
+                                      isVisited ? '다시 인증하기' : '이 장소로 미션 시작'),
+                                  onPressed: () {
+                                    Navigator.of(context).pop();
+                                    Future.delayed(
+                                        const Duration(milliseconds: 100), () {
+                                      if (mounted) {
+                                        setState(() {
+                                          _currentTargetPlace = matchedPlace;
+                                        });
+                                        final coords =
+                                            _placeCoords[matchedPlace];
+                                        if (coords != null) {
+                                          _controller
+                                              .runJavaScript(
+                                                  "showMissionTextOnMarker(${coords['lat']}, ${coords['lng']}, '$matchedPlace')")
+                                              .catchError((e) {
+                                            print(
+                                                "JS showMissionTextOnMarker 호출 오류: $e");
+                                          });
+                                        }
+                                        _controller
+                                            .runJavaScript(
+                                                "highlightMarker('${photo.galContentId}')")
+                                            .catchError((e) {
+                                          print("JS highlightMarker 호출 오류: $e");
+                                        });
+                                        _pickImage();
+                                      }
                                     });
-                                    // 1. 해당 장소의 좌표 찾기
-                                    final coords = _placeCoords[matchedPlace];
-                                    if (coords != null) {
-                                      // 2. JavaScript 함수를 호출하여 마커 위에 텍스트 표시
-                                      _controller
-                                          .runJavaScript(
-                                              "showMissionTextOnMarker(${coords['lat']}, ${coords['lng']}, '$matchedPlace')")
-                                          .catchError((e) {
-                                        print(
-                                            "JS showMissionTextOnMarker 호출 오류: $e");
-                                      });
-                                    }
-
-                                    // 3. 마커 하이라이트
-                                    _controller
-                                        .runJavaScript(
-                                            "highlightMarker('${photo.galContentId}')")
-                                        .catchError((e) {
-                                      print("JS highlightMarker 호출 오류: $e");
-                                    });
-                                    // 4. 이미지 선택창 열기
-                                    _pickImage();
-                                  }
-                                });
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue[400],
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 20, vertical: 12),
-                                textStyle: const TextStyle(fontSize: 16),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8)),
-                              ),
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blue[400],
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 20, vertical: 12),
+                                    textStyle: const TextStyle(fontSize: 16),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                // 심플한 리뷰 버튼들 - 세로 배치
+                                Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    // 모든 리뷰 보기 버튼
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(25),
+                                        border: Border.all(
+                                          color: Colors.teal.shade400,
+                                          width: 1.5,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color:
+                                                Colors.black.withOpacity(0.1),
+                                            blurRadius: 4,
+                                            offset: const Offset(0, 2),
+                                          ),
+                                        ],
+                                      ),
+                                      child: TextButton.icon(
+                                        icon: Icon(
+                                          Icons.visibility_outlined,
+                                          size: 18,
+                                          color: Colors.teal.shade600,
+                                        ),
+                                        label: Text(
+                                          '\'$matchedPlace\' 리뷰 모두 보기',
+                                          style: TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.teal.shade600,
+                                          ),
+                                        ),
+                                        onPressed: () {
+                                          Navigator.of(context).pop();
+                                          _showPlaceReviewsDialog(matchedPlace);
+                                        },
+                                        style: TextButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 20,
+                                            vertical: 12,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(25),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    // 나의 리뷰 보기 버튼
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(25),
+                                        border: Border.all(
+                                          color: Colors.teal.shade600,
+                                          width: 1.5,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color:
+                                                Colors.black.withOpacity(0.1),
+                                            blurRadius: 4,
+                                            offset: const Offset(0, 2),
+                                          ),
+                                        ],
+                                      ),
+                                      child: TextButton.icon(
+                                        icon: Icon(
+                                          Icons.person_outline,
+                                          size: 18,
+                                          color: Colors.teal.shade600,
+                                        ),
+                                        label: Text(
+                                          '나의 리뷰 보기',
+                                          style: TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.teal.shade600,
+                                          ),
+                                        ),
+                                        onPressed: () {
+                                          Navigator.of(context).pop();
+                                          _showMyPlaceReviewsDialog(
+                                              matchedPlace);
+                                        },
+                                        style: TextButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 20,
+                                            vertical: 12,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(25),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],
@@ -1165,17 +1529,12 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
-  // ===================================================================
-  // ==================== 퀘스트 UI 관련 위젯 (수정됨) ====================
-  // ===================================================================
-
   void _showQuestDialog() {
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            // 'failed' 상태의 퀘스트를 필터링합니다.
             final displayQuests =
                 _quests.where((q) => q.status != 'failed').toList();
 
@@ -1222,9 +1581,9 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                     Expanded(
                       child: ListView.separated(
                         shrinkWrap: true,
-                        itemCount: displayQuests.length, // 필터링된 리스트 사용
+                        itemCount: displayQuests.length,
                         itemBuilder: (context, index) {
-                          final quest = displayQuests[index]; // 필터링된 리스트 사용
+                          final quest = displayQuests[index];
                           switch (quest.status) {
                             case 'active':
                               return _buildActiveQuestCard(
@@ -1297,7 +1656,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
-  /// [수정됨] 퀴즈 퀘스트를 위한 UI 및 로직
   Widget _buildActiveQuestCard(Quest quest, StateSetter setDialogState) {
     final questIcon = _getIconForQuestType(quest.type);
 
@@ -1326,13 +1684,11 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                       style: const TextStyle(
                           fontWeight: FontWeight.w600, fontSize: 15)),
                   const SizedBox(height: 12),
-                  // [핵심 수정] 각 선지를 InkWell과 Container로 감싸 탭 가능하게 하고 배경을 추가
                   ...(quest.quizOptions ?? []).asMap().entries.map((entry) {
                     int index = entry.key;
                     String option = entry.value;
                     return InkWell(
                       onTap: () async {
-                        // 퀴즈 답변 제출 함수 호출
                         await _submitQuizAnswer(
                             quest.questId, index, setDialogState);
                       },
@@ -1364,7 +1720,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       );
     }
 
-    // 다른 종류의 '진행 중' 퀘스트 카드
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
@@ -1434,7 +1789,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
-  /// [신규] 퀴즈 답변을 서버에 제출하는 함수 (수정됨)
   Future<void> _submitQuizAnswer(
       String questId, int answerIndex, StateSetter setDialogState) async {
     try {
@@ -1452,19 +1806,14 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         final result = data['result'];
         final bool isCorrect = result['is_correct'];
 
-        // 중앙 오버레이로 결과 표시
         _showQuestResultOverlay(
           isCorrect: isCorrect,
           message: result['message'],
-          scoreEarned: 0, // 점수는 보상받기 시점에 표시
+          scoreEarned: 0,
         );
 
-        // [수정] 오답 시 퀘스트를 목록에서 제거하는 로직 삭제
-        // 이제 퀘스트가 사라지지 않고 재시도 가능합니다.
-
-        // 서버로부터 최신 퀘스트 목록과 유저 정보를 다시 불러와 UI를 갱신
         await Future.wait([_fetchQuestsAndProgress(), _fetchUserProfile()]);
-        setDialogState(() {}); // AlertDialog의 내용만 다시 그림
+        setDialogState(() {});
       } else {
         final error = json.decode(utf8.decode(response.bodyBytes));
         _showQuestResultOverlay(
@@ -1483,7 +1832,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
-  /// [신규/개선] 퀘스트 관련 결과(성공/실패/보상)를 표시하는 오버레이 함수
   void _showQuestResultOverlay({
     required bool isCorrect,
     required String message,
@@ -1508,7 +1856,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
 
     Widget resultContent;
-    // 점수가 있을 경우 (보상 받기 등)에만 점수 표시
     if (isCorrect && scoreEarned > 0) {
       resultContent = Column(
         mainAxisSize: MainAxisSize.min,
@@ -1525,7 +1872,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         ],
       );
     } else {
-      // 일반적인 성공/실패 메시지만 표시
       resultContent = Text(message,
           textAlign: TextAlign.center, style: const TextStyle(fontSize: 18));
     }
@@ -1557,7 +1903,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
-  /// [수정됨] 보상 받기 함수에서 새로운 오버레이를 사용하도록 변경
   Future<void> _claimReward(String questId, StateSetter setDialogState) async {
     try {
       final response = await http.post(
@@ -1571,13 +1916,13 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         final int rewardPoints = result['reward_points'] ?? 0;
 
         _showQuestResultOverlay(
-          isCorrect: true, // 보상받기는 성공적인 이벤트
+          isCorrect: true,
           message: '퀘스트 완료!',
           scoreEarned: rewardPoints,
         );
 
         await Future.wait([_fetchQuestsAndProgress(), _fetchUserProfile()]);
-        setDialogState(() {}); // 다이얼로그 UI 갱신
+        setDialogState(() {});
       } else {
         final error = json.decode(utf8.decode(response.bodyBytes));
         _showQuestResultOverlay(
@@ -1591,7 +1936,408 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     }
   }
 
-  // (이하 나머지 코드는 이전과 동일)
+  void _promptForReview(String placeName) {
+    if (!mounted || _lastMissionImage == null) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: const Row(children: [
+          Icon(Icons.rate_review_outlined, color: Colors.orange),
+          SizedBox(width: 10),
+          Text('리뷰 작성')
+        ]),
+        content: Text(
+          '\'$placeName\' 방문은 어떠셨나요?\n리뷰를 작성하고 보너스 20점을 받으세요!',
+          style: const TextStyle(fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              setState(() {
+                _lastMissionImage = null;
+              });
+            },
+            child: const Text('나중에'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _showReviewDialog(placeName, _lastMissionImage!);
+            },
+            child: const Text('리뷰 작성하기'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showReviewDialog(String placeName, File imageFile) {
+    final reviewController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: Text('\'$placeName\' 리뷰'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12.0),
+                child: Image.file(imageFile, height: 180, fit: BoxFit.cover),
+              ),
+              const SizedBox(height: 20),
+              Form(
+                key: formKey,
+                child: TextFormField(
+                  controller: reviewController,
+                  autofocus: true,
+                  maxLines: 5,
+                  decoration: const InputDecoration(
+                    hintText: '20자 이상으로 리뷰를 작성해주세요.',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().length < 20) {
+                      return '리뷰는 20자 이상이어야 합니다.';
+                    }
+                    return null;
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              setState(() {
+                _lastMissionImage = null;
+              });
+            },
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.of(context).pop();
+                _submitReview(placeName, reviewController.text, imageFile);
+              }
+            },
+            child: const Text('제출'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _submitReview(
+      String placeName, String reviewText, File imageFile) async {
+    try {
+      var request =
+          http.MultipartRequest('POST', Uri.parse('$serverUrl/reviews/'))
+            ..fields['user_id'] = _userId
+            ..fields['place_name'] = placeName
+            ..fields['review_text'] = reviewText
+            ..files.add(
+              await http.MultipartFile.fromPath('image', imageFile.path),
+            );
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (mounted) {
+        if (response.statusCode == 200) {
+          final data = json.decode(utf8.decode(response.bodyBytes));
+          final int scoreEarned = data['score_earned'] ?? 0;
+          _showQuestResultOverlay(
+            isCorrect: true,
+            message: '리뷰가 등록되었습니다!',
+            scoreEarned: scoreEarned,
+          );
+          _fetchUserProfile();
+          _fetchRankings();
+        } else {
+          final error = json.decode(utf8.decode(response.bodyBytes));
+          _showQuestResultOverlay(
+              isCorrect: false,
+              message: error['detail'] ?? '리뷰 등록에 실패했습니다.',
+              scoreEarned: 0);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _showQuestResultOverlay(
+            isCorrect: false, message: '네트워크 오류가 발생했습니다.', scoreEarned: 0);
+      }
+      print('리뷰 제출 오류: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _lastMissionImage = null;
+        });
+      }
+    }
+  }
+
+  Future<List<Review>> _fetchMyReviews() async {
+    try {
+      final response = await http.get(Uri.parse('$serverUrl/reviews/$_userId'));
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        final List<dynamic> reviewList = data['reviews'];
+        return reviewList.map((json) => Review.fromJson(json)).toList();
+      }
+    } catch (e) {
+      print("나의 리뷰 로딩 오류: $e");
+    }
+    return [];
+  }
+
+  // [추가] 장소별 리뷰 목록을 보여주는 다이얼로그 함수
+  void _showPlaceReviewsDialog(String placeName) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text('\'$placeName\' 방문 후기'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: FutureBuilder<List<Review>>(
+              future: _fetchPlaceReviews(placeName),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return const Center(child: Text('리뷰를 불러오는 데 실패했습니다.'));
+                }
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return const Center(child: Text('아직 작성된 리뷰가 없습니다.'));
+                }
+
+                final reviews = snapshot.data!;
+                return ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: reviews.length,
+                  itemBuilder: (context, index) {
+                    final review = reviews[index];
+                    final userInfo = review.userInfo;
+                    final userImageUrl = userInfo.profileImageUrl;
+
+                    final String? reviewImageUrl = review.imageUrl;
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      clipBehavior: Clip.antiAlias,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (reviewImageUrl != null &&
+                              reviewImageUrl.isNotEmpty)
+                            Image.network(
+                              reviewImageUrl,
+                              width: double.infinity,
+                              height: 150,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Container(
+                                  height: 150,
+                                  color: Colors.grey[200],
+                                  alignment: Alignment.center,
+                                  child: const Icon(Icons.broken_image,
+                                      color: Colors.grey),
+                                );
+                              },
+                            ),
+                          ListTile(
+                            leading: CircleAvatar(
+                              radius: 20,
+                              backgroundColor: Colors.grey[200],
+                              child: userImageUrl != null &&
+                                      userImageUrl.isNotEmpty
+                                  ? ClipOval(
+                                      child: Image.network(
+                                        userImageUrl,
+                                        fit: BoxFit.cover,
+                                        width: 40,
+                                        height: 40,
+                                        errorBuilder: (c, e, s) => const Icon(
+                                            Icons.person,
+                                            color: Colors.grey),
+                                      ),
+                                    )
+                                  : const Icon(Icons.person,
+                                      color: Colors.grey),
+                            ),
+                            title: Text(userInfo.username,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 8.0),
+                              child: Text(review.reviewText),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                _formatReviewDate(review.createdAt),
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('닫기'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showMyReviewsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: const Text('나의 리뷰 목록'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: FutureBuilder<List<Review>>(
+              future: _fetchMyReviews(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return const Center(child: Text('리뷰를 불러오는 데 실패했습니다.'));
+                }
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return const Center(child: Text('작성한 리뷰가 없습니다.'));
+                }
+
+                final reviews = snapshot.data!;
+                return ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: reviews.length,
+                  itemBuilder: (context, index) {
+                    final review = reviews[index];
+                    final userInfo = review.userInfo;
+                    final userImageUrl = userInfo.profileImageUrl;
+
+                    final String? reviewImageUrl = review.imageUrl;
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      clipBehavior: Clip.antiAlias,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (reviewImageUrl != null &&
+                              reviewImageUrl.isNotEmpty)
+                            Image.network(
+                              reviewImageUrl, // 수정된 URL 사용
+                              width: double.infinity,
+                              height: 150,
+                              fit: BoxFit.cover,
+                              loadingBuilder: (context, child, progress) {
+                                if (progress == null) return child;
+                                return Container(
+                                  height: 150,
+                                  alignment: Alignment.center,
+                                  child: const CircularProgressIndicator(),
+                                );
+                              },
+                              errorBuilder: (context, error, stackTrace) {
+                                print('리뷰 이미지 로드 오류: $error');
+                                return Container(
+                                  height: 150,
+                                  color: Colors.grey[200],
+                                  alignment: Alignment.center,
+                                  child: const Icon(Icons.broken_image,
+                                      color: Colors.grey),
+                                );
+                              },
+                            ),
+                          ListTile(
+                            leading: CircleAvatar(
+                              radius: 20,
+                              backgroundColor: Colors.grey[200],
+                              child: userImageUrl != null &&
+                                      userImageUrl.isNotEmpty
+                                  ? ClipOval(
+                                      child: Image.network(
+                                        userImageUrl,
+                                        fit: BoxFit.cover,
+                                        width: 40,
+                                        height: 40,
+                                        errorBuilder: (c, e, s) => const Icon(
+                                            Icons.person,
+                                            color: Colors.grey),
+                                      ),
+                                    )
+                                  : const Icon(Icons.person,
+                                      color: Colors.grey),
+                            ),
+                            title: Text(review.placeName,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 4.0),
+                              child: Text(
+                                review.reviewText,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('닫기'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildMenuOption({
     required double distance,
     required String tooltip,
@@ -1723,7 +2469,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               final textPainter = TextPainter(
                 text: TextSpan(text: username, style: style),
                 maxLines: 1,
-                textDirection: TextDirection.ltr,
+                textDirection: ui.TextDirection.ltr,
               )..layout();
 
               return SizedBox(
@@ -1861,6 +2607,12 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
 
   Widget _buildFabMenu() {
     final List<Widget> menuButtons = [
+      _buildMenuOption(
+        distance: 310.0,
+        tooltip: '나의 리뷰',
+        onPressed: _showMyReviewsDialog,
+        child: const Icon(Icons.rate_review_outlined),
+      ),
       _buildMenuOption(
         distance: 250.0,
         tooltip: '퀘스트 목록',
