@@ -71,5 +71,6 @@ def initialize_firebase():
 USERS_COLLECTION = 'users'
 GAME_SESSIONS_COLLECTION = 'game_sessions'
 VISITS_COLLECTION = 'visits'
+
 REVIEWS_COLLECTION = 'reviews'
 DAILY_QUESTS_COLLECTION = 'daily_quests'
