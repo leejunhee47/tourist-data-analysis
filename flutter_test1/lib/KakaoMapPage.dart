@@ -2319,6 +2319,17 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                               ),
                             ),
                           ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                _formatReviewDate(review.createdAt),
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 12),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     );
