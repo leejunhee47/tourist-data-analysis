@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>내 위치 찾기</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, user-scalable=yes"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+      }
+      #map {
+        width: 100%;
+        height: 100vh;
+        position: relative;
+      }
+      .current-location-dot {
+        width: 12px;
+        height: 12px;
+        background-color: #ff4444;
+        border-radius: 50%;
+        position: absolute;
+        transform: translate(-50%, -50%);
+        z-index: 5;
+        border: 3px solid white;
+      }
+      .current-location-pulse {
+        width: 25px;
+        height: 25px;
+        background-color: rgba(68, 127, 255, 0.7);
+        border-radius: 50%;
+        position: absolute;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 0 0 rgba(68, 127, 255, 0.7);
+        animation: pulse-animation 1.5s infinite ease-out;
+        z-index: 4;
+      }
+      @keyframes pulse-animation {
+        0% {
+          transform: translate(-50%, -50%) scale(0.8);
+          opacity: 0.7;
+        }
+        100% {
+          transform: translate(-50%, -50%) scale(2.5);
+          opacity: 0;
+        }
+      }
+      .loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(255, 255, 255, 0.95);
+        padding: 24px;
+        border-radius: 12px;
+        text-align: center;
+        z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+      .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #ff4444;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 16px;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map">
+      <div id="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <div>지도를 불러오는 중...</div>
+      </div>
+    </div>
+
+    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=aa68c996a365f43a8153e7d4cee31250&libraries=services"></script>
+    <script>
+      // 서울시 경계 좌표 데이터
+      const seoulCoordinates = [
+        new kakao.maps.LatLng(37.4666439205858, 127.12448814562413),
+        new kakao.maps.LatLng(37.466520884451874, 127.1242069321964),
+        new kakao.maps.LatLng(37.46217475459644, 127.10434122885971),
+        new kakao.maps.LatLng(37.43018832758625, 127.07088469811113),
+        new kakao.maps.LatLng(37.4302740280479, 127.0707064662218),
+        new kakao.maps.LatLng(37.438237145594, 127.04005277532535),
+        new kakao.maps.LatLng(37.46147034249536, 127.03379944035794),
+        new kakao.maps.LatLng(37.4615303084281, 127.03382171137727),
+        new kakao.maps.LatLng(37.46345207152503, 127.03453412881018),
+        new kakao.maps.LatLng(37.463457701068506, 127.03453730738119),
+        new kakao.maps.LatLng(37.45550936015528, 127.01193901632813),
+        new kakao.maps.LatLng(37.45540804563676, 127.0113677119196),
+        new kakao.maps.LatLng(37.439069769737706, 126.95896605519613),
+        new kakao.maps.LatLng(37.45021266066312, 126.928398718143),
+        new kakao.maps.LatLng(37.4498986888838, 126.92835700490626),
+        new kakao.maps.LatLng(37.44356039362581, 126.92224736989289),
+        new kakao.maps.LatLng(37.443250788318885, 126.92200704606958),
+        new kakao.maps.LatLng(37.439307081656374, 126.91389165150723),
+        new kakao.maps.LatLng(37.43919756950644, 126.91353583639527),
+        new kakao.maps.LatLng(37.4335177909577, 126.9072539727338),
+        new kakao.maps.LatLng(37.43354665430045, 126.90708939028751),
+        new kakao.maps.LatLng(37.43477555753823, 126.902789441085),
+        new kakao.maps.LatLng(37.43489155825632, 126.90278381899759),
+        new kakao.maps.LatLng(37.435962189453114, 126.90258873335353),
+        new kakao.maps.LatLng(37.43600855880374, 126.90248415408749),
+        new kakao.maps.LatLng(37.43618289959961, 126.9022116812914),
+        new kakao.maps.LatLng(37.43620062634847, 126.9022056584959),
+        new kakao.maps.LatLng(37.43628410575411, 126.90202334628252),
+        new kakao.maps.LatLng(37.436387033051965, 126.9018794940231),
+        new kakao.maps.LatLng(37.4377330168086, 126.90033710425958),
+        new kakao.maps.LatLng(37.437781105606675, 126.90027471163853),
+        new kakao.maps.LatLng(37.455567517759974, 126.88786002402594),
+        new kakao.maps.LatLng(37.45553719625955, 126.8876603495564),
+        new kakao.maps.LatLng(37.49106674311068, 126.87355968425534),
+        new kakao.maps.LatLng(37.490845443350864, 126.8732976926301),
+        new kakao.maps.LatLng(37.4906969705978, 126.87244776128445),
+        new kakao.maps.LatLng(37.490602443526996, 126.87225463563813),
+        new kakao.maps.LatLng(37.492131398705226, 126.86951218576495),
+        new kakao.maps.LatLng(37.49217121107502, 126.8696158296022),
+        new kakao.maps.LatLng(37.4940796800465, 126.86690705120128),
+        new kakao.maps.LatLng(37.49398740662242, 126.8669766488407),
+        new kakao.maps.LatLng(37.48966818340981, 126.86111908361396),
+        new kakao.maps.LatLng(37.48954727435679, 126.86101647965847),
+        new kakao.maps.LatLng(37.48580696970532, 126.85748359866508),
+        new kakao.maps.LatLng(37.48579453849624, 126.85744917240672),
+        new kakao.maps.LatLng(37.48576055748878, 126.8572904217548),
+        new kakao.maps.LatLng(37.48575426666921, 126.85721499662559),
+        new kakao.maps.LatLng(37.48202475115549, 126.84745541682669),
+        new kakao.maps.LatLng(37.481910137829594, 126.84701576597996),
+        new kakao.maps.LatLng(37.47468877833988, 126.84121471815003),
+        new kakao.maps.LatLng(37.4746768707427, 126.84115804833667),
+        new kakao.maps.LatLng(37.474804584291, 126.84003079667828),
+        new kakao.maps.LatLng(37.47486161420836, 126.83994906384793),
+        new kakao.maps.LatLng(37.47517829466936, 126.83947233288954),
+        new kakao.maps.LatLng(37.47517713177623, 126.8394461875337),
+        new kakao.maps.LatLng(37.47536073899915, 126.8384452976402),
+        new kakao.maps.LatLng(37.47537164469701, 126.83839528045023),
+        new kakao.maps.LatLng(37.47518412039784, 126.81931070810403),
+        new kakao.maps.LatLng(37.47517732083924, 126.81928352572616),
+        new kakao.maps.LatLng(37.4850015072935, 126.81941319995495),
+        new kakao.maps.LatLng(37.485034727018764, 126.81940090559604),
+        new kakao.maps.LatLng(37.485393317344666, 126.81931983972237),
+        new kakao.maps.LatLng(37.485430184635995, 126.8193066787723),
+        new kakao.maps.LatLng(37.48550200093884, 126.81931674798676),
+        new kakao.maps.LatLng(37.48550426825966, 126.81932699742285),
+        new kakao.maps.LatLng(37.48565923787357, 126.81976421399546),
+        new kakao.maps.LatLng(37.48567055977359, 126.81980357805229),
+        new kakao.maps.LatLng(37.486020187012, 126.82085673566871),
+        new kakao.maps.LatLng(37.48606231694577, 126.82097447268102),
+        new kakao.maps.LatLng(37.488187305447084, 126.8230376824639),
+        new kakao.maps.LatLng(37.48838072867327, 126.82304057020718),
+        new kakao.maps.LatLng(37.522808238386034, 126.82519578544195),
+        new kakao.maps.LatLng(37.522814433306856, 126.82519276074486),
+        new kakao.maps.LatLng(37.54075211803162, 126.82093622383633),
+        new kakao.maps.LatLng(37.554242375748366, 126.7662043574505),
+        new kakao.maps.LatLng(37.58159385885768, 126.79369544519706),
+        new kakao.maps.LatLng(37.59371571335089, 126.8186829622044),
+        new kakao.maps.LatLng(37.592849755469835, 126.81930252899605),
+        new kakao.maps.LatLng(37.57379912026391, 126.85362858539449),
+        new kakao.maps.LatLng(37.591666584075185, 126.88571526656891),
+        new kakao.maps.LatLng(37.59152345197316, 126.88561180509548),
+        new kakao.maps.LatLng(37.591104920061944, 126.8854670373862),
+        new kakao.maps.LatLng(37.59100103420086, 126.8854845330959),
+        new kakao.maps.LatLng(37.59820751647032, 126.90117136916932),
+        new kakao.maps.LatLng(37.598488590691055, 126.90126122233153),
+        new kakao.maps.LatLng(37.619074543083734, 126.90523109002538),
+        new kakao.maps.LatLng(37.61921925372372, 126.90522347409764),
+        new kakao.maps.LatLng(37.624495625555106, 126.9066271476982),
+        new kakao.maps.LatLng(37.625094022984605, 126.90743985641852),
+        new kakao.maps.LatLng(37.64778767158853, 126.90638506235992),
+        new kakao.maps.LatLng(37.64782170891583, 126.90634871420797),
+        new kakao.maps.LatLng(37.6467592176747, 126.90985753641255),
+        new kakao.maps.LatLng(37.646662033192094, 126.90996658247529),
+        new kakao.maps.LatLng(37.646286231489526, 126.91043851534273),
+        new kakao.maps.LatLng(37.64627870692835, 126.91043589523396),
+        new kakao.maps.LatLng(37.64593839043465, 126.91103341863632),
+        new kakao.maps.LatLng(37.6459348748236, 126.91104162625543),
+        new kakao.maps.LatLng(37.64511629276755, 126.91518932884668),
+        new kakao.maps.LatLng(37.64514377118851, 126.91580612419956),
+        new kakao.maps.LatLng(37.64884012277876, 126.9279365337432),
+        new kakao.maps.LatLng(37.648873013884824, 126.92797282834235),
+        new kakao.maps.LatLng(37.64888777367512, 126.92799207692265),
+        new kakao.maps.LatLng(37.6504961523453, 126.93282320184188),
+        new kakao.maps.LatLng(37.6506144041979, 126.93334917765836),
+        new kakao.maps.LatLng(37.65624105992546, 126.93966623205036),
+        new kakao.maps.LatLng(37.6564454988786, 126.93990472628454),
+        new kakao.maps.LatLng(37.65667282689997, 126.94018606220826),
+        new kakao.maps.LatLng(37.65676784823662, 126.94033521165288),
+        new kakao.maps.LatLng(37.65387550726039, 126.95544419558657),
+        new kakao.maps.LatLng(37.65386004224214, 126.95545866547994),
+        new kakao.maps.LatLng(37.6364380599443, 126.98395943515433),
+        new kakao.maps.LatLng(37.63633745489391, 126.9841989529393),
+        new kakao.maps.LatLng(37.636330826626114, 126.98421472500995),
+        new kakao.maps.LatLng(37.635934852968546, 126.98546052305173),
+        new kakao.maps.LatLng(37.63597004140536, 126.9853780243647),
+        new kakao.maps.LatLng(37.63633745489391, 126.9841989529393),
+        new kakao.maps.LatLng(37.636547656841124, 126.98446162524),
+        new kakao.maps.LatLng(37.65603864772166, 126.97965838947995),
+        new kakao.maps.LatLng(37.6850798158096, 127.00456697867835),
+        new kakao.maps.LatLng(37.68486524762253, 127.00552971892708),
+        new kakao.maps.LatLng(37.69669983614291, 127.00966648935855),
+        new kakao.maps.LatLng(37.69737761882486, 127.0121245963727),
+        new kakao.maps.LatLng(37.69240549105115, 127.04490459959014),
+        new kakao.maps.LatLng(37.69236367591524, 127.04529608963428),
+        new kakao.maps.LatLng(37.69289300869862, 127.04890068063864),
+        new kakao.maps.LatLng(37.69281135361802, 127.04892011684281),
+        new kakao.maps.LatLng(37.69178245133874, 127.08390529304403),
+        new kakao.maps.LatLng(37.69038984798168, 127.08517746569052),
+        new kakao.maps.LatLng(37.65549186357224, 127.09235192147821),
+        new kakao.maps.LatLng(37.65445365833233, 127.09286768996691),
+        new kakao.maps.LatLng(37.642730279886464, 127.1107515628852),
+        new kakao.maps.LatLng(37.59549705107354, 127.11687775807742),
+        new kakao.maps.LatLng(37.56785322323571, 127.13394554105413),
+        new kakao.maps.LatLng(37.56802464152234, 127.13474102620464),
+        new kakao.maps.LatLng(37.569795300013745, 127.15124362796432),
+        new kakao.maps.LatLng(37.572043536648785, 127.1549813353778),
+        new kakao.maps.LatLng(37.572188303449664, 127.17773117758638),
+        new kakao.maps.LatLng(37.57217139361932, 127.1777422872658),
+        new kakao.maps.LatLng(37.57115320042141, 127.17798236683704),
+        new kakao.maps.LatLng(37.57106693568019, 127.17805768631027),
+        new kakao.maps.LatLng(37.570413231577895, 127.17838317444362),
+        new kakao.maps.LatLng(37.57037435266602, 127.17839688143106),
+        new kakao.maps.LatLng(37.56976862114466, 127.17865401781775),
+        new kakao.maps.LatLng(37.56973789588422, 127.17867853259932),
+        new kakao.maps.LatLng(37.569236981136434, 127.17906344497867),
+        new kakao.maps.LatLng(37.5691236950674, 127.17913286048612),
+        new kakao.maps.LatLng(37.56900339442535, 127.17918103163179),
+        new kakao.maps.LatLng(37.56894649053065, 127.17920371745956),
+        new kakao.maps.LatLng(37.547875810714345, 127.18267635419156),
+        new kakao.maps.LatLng(37.54774771227253, 127.18267373726607),
+        new kakao.maps.LatLng(37.54630155058717, 127.17826131172255),
+        new kakao.maps.LatLng(37.546142259660186, 127.17783676304336),
+        new kakao.maps.LatLng(37.545581845621655, 127.17390587134958),
+        new kakao.maps.LatLng(37.54553975037379, 127.17361545708238),
+        new kakao.maps.LatLng(37.54556905754166, 127.17340689759621),
+        new kakao.maps.LatLng(37.54556962940526, 127.17320516148587),
+        new kakao.maps.LatLng(37.544436665108684, 127.16525354706339),
+        new kakao.maps.LatLng(37.54448687726985, 127.16518842283608),
+        new kakao.maps.LatLng(37.54128351901674, 127.15964745814631),
+        new kakao.maps.LatLng(37.54108311607964, 127.15959717026999),
+        new kakao.maps.LatLng(37.53285825175579, 127.15375620206102),
+        new kakao.maps.LatLng(37.532662505061, 127.15380211103749),
+        new kakao.maps.LatLng(37.5219406272, 127.14576900429451),
+        new kakao.maps.LatLng(37.52193231127703, 127.14566577557713),
+        new kakao.maps.LatLng(37.521581231118425, 127.14564264493674),
+        new kakao.maps.LatLng(37.52147908644674, 127.14558978122007),
+        new kakao.maps.LatLng(37.51436343317848, 127.14259476431539),
+        new kakao.maps.LatLng(37.51435666315716, 127.14260569987978),
+        new kakao.maps.LatLng(37.50899702452757, 127.14008527652372),
+        new kakao.maps.LatLng(37.508904417324764, 127.14006354547423),
+        new kakao.maps.LatLng(37.49914215949103, 127.16101136633914),
+        new kakao.maps.LatLng(37.49906614103524, 127.16100520056195),
+        new kakao.maps.LatLng(37.48999210144077, 127.15738637743016),
+        new kakao.maps.LatLng(37.48995007189349, 127.1572823190578),
+        new kakao.maps.LatLng(37.489948638871475, 127.15731681479384),
+        new kakao.maps.LatLng(37.4899615877533, 127.15735665485731),
+        new kakao.maps.LatLng(37.4898938383289, 127.1579182626353),
+        new kakao.maps.LatLng(37.48989430463104, 127.15838209058433),
+        new kakao.maps.LatLng(37.488574396512355, 127.15642724370568),
+        new kakao.maps.LatLng(37.488059993318686, 127.15545167116943),
+        new kakao.maps.LatLng(37.487936636967056, 127.15534133269671),
+        new kakao.maps.LatLng(37.48705978381838, 127.15374124653098),
+        new kakao.maps.LatLng(37.48310644547842, 127.1480912617321),
+        new kakao.maps.LatLng(37.48281606016224, 127.1478891941261),
+        new kakao.maps.LatLng(37.478632972085876, 127.14724152025043),
+        new kakao.maps.LatLng(37.477295113416965, 127.14715916268612),
+        new kakao.maps.LatLng(37.47408657612582, 127.13955999950241),
+        new kakao.maps.LatLng(37.474135062339876, 127.13833405043304),
+        new kakao.maps.LatLng(37.47412690385656, 127.13819772030355),
+        new kakao.maps.LatLng(37.47415393761236, 127.13750729597875),
+        new kakao.maps.LatLng(37.470715303606816, 127.13253354046908),
+        new kakao.maps.LatLng(37.47058985631461, 127.13247725154778),
+        new kakao.maps.LatLng(37.47049710618933, 127.13242927205611),
+        new kakao.maps.LatLng(37.470329267874234, 127.13233119637184),
+        new kakao.maps.LatLng(37.468780283544284, 127.13255718045988),
+        new kakao.maps.LatLng(37.46839366435819, 127.13279960034394),
+        new kakao.maps.LatLng(37.46799981438472, 127.1292010497195),
+        new kakao.maps.LatLng(37.468066124977376, 127.12906221307959),
+        new kakao.maps.LatLng(37.468273039293685, 127.12862836343653),
+        new kakao.maps.LatLng(37.4666439205858, 127.12448814562413),
+      ];
+
+      let map;
+      let currentLocationCustomOverlay = null;
+      let allOverlays = [];
+      let missionTextOverlay = null;
+      let highlightedContentId = null;
+
+      /**
+       * 모든 마커의 테두리를 원래 상태로 되돌리는 함수.
+       */
+      function resetAllMarkerBorders() {
+        const overlays = document.getElementsByClassName("photo-overlay");
+        for (let i = 0; i < overlays.length; i++) {
+          const isVisited = overlays[i].getAttribute("data-visited") === "true";
+          overlays[i].style.borderColor = isVisited ? "#2b92ec" : "#fff"; // 방문했다면 파란색, 아니면 흰색
+          overlays[i].style.borderWidth = "3px";
+        }
+        highlightedContentId = null;
+        console.log("모든 마커 테두리 초기화 완료");
+      }
+
+      /**
+       * 특정 마커에 빨간색 테두리를 표시하여 하이라이트하는 함수.
+       */
+      function highlightMarker(contentId) {
+        if (highlightedContentId && highlightedContentId !== contentId) {
+          const prevOverlay = document.getElementById(
+            `photo-overlay-${highlightedContentId}`
+          );
+          if (prevOverlay) {
+            const isVisited =
+              prevOverlay.getAttribute("data-visited") === "true";
+            prevOverlay.style.borderColor = isVisited ? "#2b92ec" : "#fff";
+            prevOverlay.style.borderWidth = "3px";
+          }
+        }
+
+        const targetOverlay = document.getElementById(
+          `photo-overlay-${contentId}`
+        );
+        if (targetOverlay) {
+          targetOverlay.style.borderColor = "#ff4444"; // 빨간색
+          targetOverlay.style.borderWidth = "4px";
+          console.log(`마커 하이라이트: ${contentId}`);
+          highlightedContentId = contentId;
+        } else {
+          console.error(`하이라이트할 마커를 찾지 못했습니다: ${contentId}`);
+        }
+      }
+
+      /**
+       * 서울시 경계 폴리곤을 지도에 표시하는 함수
+       */
+      function displaySeoulArea(map, coordinates) {
+        const outerPath = [
+          new kakao.maps.LatLng(40, 124),
+          new kakao.maps.LatLng(40, 132),
+          new kakao.maps.LatLng(33, 132),
+          new kakao.maps.LatLng(33, 124),
+        ];
+        const polygon = new kakao.maps.Polygon({
+          path: [outerPath, coordinates],
+          strokeWeight: 2,
+          strokeColor: "#004c80",
+          strokeOpacity: 0.8,
+          fillColor: "#000000",
+          fillOpacity: 0.3,
+        });
+        polygon.setMap(map);
+      }
+
+      function initializeMap() {
+        try {
+          console.log("지도 초기화 시작");
+          const container = document.getElementById("map");
+          const options = {
+            center: new kakao.maps.LatLng(37.5665, 126.978),
+            level: 8,
+            maxLevel: 12,
+          };
+          map = new kakao.maps.Map(container, options);
+
+          // 서울시 경계 폴리곤 표시 함수 호출
+          displaySeoulArea(map, seoulCoordinates);
+
+          const loadingElement = document.getElementById("loading");
+          if (loadingElement) loadingElement.style.display = "none";
+          console.log("카카오맵 초기화 완료");
+        } catch (error) {
+          console.error("지도 초기화 오류:", error);
+          const loadingElement = document.getElementById("loading");
+          if (loadingElement)
+            loadingElement.innerHTML = "지도 로드 실패: " + error.message;
+        }
+      }
+
+      function clearAllMarkers() {
+        try {
+          if (currentLocationCustomOverlay) {
+            currentLocationCustomOverlay.setMap(null);
+            currentLocationCustomOverlay = null;
+          }
+          if (missionTextOverlay) {
+            missionTextOverlay.setMap(null);
+            missionTextOverlay = null;
+          }
+          for (let i = 0; i < allOverlays.length; i++) {
+            allOverlays[i].setMap(null);
+          }
+          allOverlays = [];
+        } catch (error) {
+          console.error("마커 제거 중 오류:", error);
+        }
+      }
+
+      if (typeof kakao !== "undefined" && kakao.maps) {
+        kakao.maps.load(initializeMap);
+      }
+
+      function addCurrentLocationMarker(lat, lng, autoMove = true) {
+        try {
+          if (!map) return;
+          if (currentLocationCustomOverlay)
+            currentLocationCustomOverlay.setMap(null);
+          const locPosition = new kakao.maps.LatLng(lat, lng);
+          const content = `<div style="position: relative; width: 24px; height: 24px; pointer-events: none;"><div class="current-location-pulse"></div><div class="current-location-dot"></div></div>`;
+          currentLocationCustomOverlay = new kakao.maps.CustomOverlay({
+            position: locPosition,
+            content: content,
+            yAnchor: 0.5,
+            xAnchor: 0.5,
+            zIndex: 1000,
+          });
+          currentLocationCustomOverlay.setMap(map);
+          if (autoMove) {
+            map.panTo(locPosition);
+            setTimeout(() => {
+              map.setLevel(5);
+            }, 800);
+          }
+        } catch (error) {
+          console.error("현재 위치 마커 추가 중 오류 발생:", error);
+        }
+      }
+
+      function addPhotoMarker(lat, lng, imageUrl, title, contentId, isVisited) {
+        try {
+          if (!map) return;
+          const markerPosition = new kakao.maps.LatLng(lat, lng);
+          const filterStyle = isVisited ? "" : "filter: grayscale(100%);";
+          const initialBorderColor = isVisited ? "#2b92ec" : "#fff";
+
+          const content = `
+            <div id="photo-overlay-${contentId}" class="photo-overlay" 
+                 data-visited="${isVisited}"
+                 style="width:50px; height:50px; border-radius:50%; border:3px solid ${initialBorderColor}; box-shadow:0 2px 6px rgba(0,0,0,0.4); cursor:pointer; transition:all 0.2s ease; overflow:hidden; -webkit-tap-highlight-color:transparent; touch-action:manipulation;"
+                 onclick="handlePhotoClick('${contentId}', '${title}', ${lat}, ${lng});"
+                 ontouchstart="this.style.transform='scale(0.95)'"
+                 ontouchend="this.style.transform='scale(1)'">
+              <div class="photo-image-inner" style="width:100%; height:100%; background-image:url('${imageUrl}'); background-size:cover; background-position:center; ${filterStyle} transition:filter 0.5s ease; pointer-events:none;"></div>
+            </div>`;
+
+          const photoOverlay = new kakao.maps.CustomOverlay({
+            position: markerPosition,
+            content: content,
+            yAnchor: 1.0,
+            zIndex: 100,
+          });
+          photoOverlay.setMap(map);
+          allOverlays.push(photoOverlay);
+        } catch (error) {
+          console.error("관광지 오버레이 추가 오류:", error);
+        }
+      }
+
+      function updateMarkerToVisited(contentId) {
+        try {
+          const targetOverlay = document.getElementById(
+            `photo-overlay-${contentId}`
+          );
+          if (!targetOverlay) return;
+
+          targetOverlay.setAttribute("data-visited", "true");
+
+          if (highlightedContentId !== contentId) {
+            targetOverlay.style.borderColor = "#2b92ec";
+          }
+
+          const imageInnerDiv =
+            targetOverlay.querySelector(".photo-image-inner");
+          if (imageInnerDiv) imageInnerDiv.style.filter = "none";
+        } catch (e) {
+          console.error("마커 업데이트 중 오류 발생:", e);
+        }
+      }
+
+      function handlePhotoClick(contentId, title, lat, lng) {
+        if (window.FlutterChannel) {
+          const message = JSON.stringify({
+            type: "markerClick",
+            contentId: contentId,
+            title: title,
+            lat: lat,
+            lng: lng,
+          });
+          window.FlutterChannel.postMessage(message);
+        }
+      }
+
+      function fitMapBounds(points) {
+        try {
+          if (!map || !points || points.length === 0) return;
+          if (points.length === 1) {
+            map.setCenter(new kakao.maps.LatLng(points[0].lat, points[0].lng));
+            map.setLevel(6);
+            return;
+          }
+          const bounds = new kakao.maps.LatLngBounds();
+          for (let i = 0; i < points.length; i++) {
+            bounds.extend(new kakao.maps.LatLng(points[i].lat, points[i].lng));
+          }
+          map.setBounds(bounds, 50, 50, 50, 50);
+        } catch (error) {
+          console.error("지도 범위 조정 중 오류 발생:", error);
+        }
+      }
+
+      function showMissionTextOnMarker(lat, lng, placeName) {
+        hideMissionText();
+        const content =
+          `<div style="padding: 5px 10px; background-color: rgba(0,0,0,0.75); color: white; border-radius: 15px; font-size: 14px; font-weight: bold; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3); -webkit-tap-highlight-color:transparent;">` +
+          `현재 미션: ${placeName}` +
+          `</div>`;
+        missionTextOverlay = new kakao.maps.CustomOverlay({
+          position: new kakao.maps.LatLng(lat, lng),
+          content: content,
+          yAnchor: 2.8,
+          zIndex: 101,
+        });
+        missionTextOverlay.setMap(map);
+      }
+
+      function hideMissionText() {
+        if (missionTextOverlay) {
+          missionTextOverlay.setMap(null);
+          missionTextOverlay = null;
+        }
+      }
+
+      window.addCurrentLocationMarker = addCurrentLocationMarker;
+      window.addPhotoMarker = addPhotoMarker;
+      window.fitMapBounds = fitMapBounds;
+      window.clearAllMarkers = clearAllMarkers;
+      window.handlePhotoClick = handlePhotoClick;
+      window.highlightMarker = highlightMarker;
+      window.resetAllMarkerBorders = resetAllMarkerBorders;
+      window.updateMarkerToVisited = updateMarkerToVisited;
+      window.showMissionTextOnMarker = showMissionTextOnMarker;
+      window.hideMissionText = hideMissionText;
+
+      document.addEventListener("DOMContentLoaded", function () {
+        document.body.style.touchAction = "manipulation";
+      });
+    </script>
+  </body>
+</html>

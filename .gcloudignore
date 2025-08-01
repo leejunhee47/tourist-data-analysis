@@ -1,0 +1,93 @@
+
+tourist-data-analysis-main/flutter/
+**/build/
+**/.dart_tool/
+**/.idea/
+**/.metadata
+**/.packages
+
+# IDE 및 OS 관련 파일 제외
+.DS_Store
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python 관련 제외
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 불필요한 모델 파일 제외
+fine_tuned_model/
+saved_model/
+
+# 가상환경 제외
+venv/
+env/
+ENV/
+
+# 로그 및 임시 파일 제외
+*.log
+*.tmp
+*.temp
+
+; # 이미지 폴더 제외 (한글 파일명 및 대용량 파일)
+; query_images/
+; query_images_backup/
+; map_images/
+
+# 특정 이미지 파일만 제외
+tourist-data-analysis-main/**/*.jpg
+tourist-data-analysis-main/**/*.jpeg
+tourist-data-analysis-main/**/*.png
+tourist-data-analysis-main/**/*.gif
+tourist-data-analysis-main/**/*.bmp
+
+# 서비스 계정 키 파일은 빌드에 포함해야 함
+!tourist-data-analysis-main/tourapi-77ca1-firebase-adminsdk-fbsvc-3caf24d515.json
+
+# Flutter 앱의 에셋은 제외하지 않도록 경로를 특정
+!flutter_test1/assets/**
+
+# API 서버가 사용하는 map_images 디렉토리는 제외하지 않음
+!tourist-data-analysis-main/map_images/**
+
+# 테스트 파일 제외
+test_*.py
+*_test.py
+*_test.dart
+
+# Git 관련 제외
+.git/
+.gitignore
+
+# Docker 관련 제외
+.dockerignore
+Dockerfile.dev
+
+# 기타 제외
+*.backup
+*.old
+*.orig
+node_modules/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local 
