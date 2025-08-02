@@ -173,6 +173,13 @@ class PlaceReviewResponse(BaseModel):
     score_earned: int
 # ▲▲▲ [추가] 장소별 리뷰 조회를 위한 Pydantic 모델 추가 ▲▲▲
 
+# 🔥 [추가] 공유 기록을 위한 Pydantic 모델
+class ShareRecordRequest(BaseModel):
+    user_id: str
+    review_id: str
+    platform: str = "kakao"
+
+
 # --- 이하 API 엔드포인트 ---
 
 @app.post("/create_user/")
@@ -856,6 +863,42 @@ async def get_user_reviews_for_place(user_id: str, place_name: str):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"리뷰 조회 중 오류 발생: {e}")
 
+# 🔥 [추가] 공유 기록 API 엔드포인트
+@app.post("/shares/record")
+async def record_share(request: ShareRecordRequest):
+    """
+    사용자의 공유 활동을 기록합니다.
+    - review 문서의 share_count를 1 증가시킵니다.
+    """
+    try:
+        if not db:
+            raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
+
+        review_ref = db.collection("reviews").document(request.review_id)
+        
+        # Firestore 트랜잭션을 사용하여 안전하게 카운트 증가
+        @firestore.transactional
+        def update_share_count(transaction, ref):
+            snapshot = ref.get(transaction=transaction)
+            if not snapshot.exists:
+                raise HTTPException(status_code=404, detail="공유하려는 리뷰를 찾을 수 없습니다.")
+            
+            transaction.update(ref, {
+                'share_count': firestore.Increment(1)
+            })
+        
+        transaction = db.transaction()
+        update_share_count(transaction, review_ref)
+
+        print(f"🔗 공유 기록 완료: Review {request.review_id} by User {request.user_id}")
+        return {"message": "공유가 성공적으로 기록되었습니다."}
+
+    except HTTPException:
+        raise # 이미 처리된 HTTP 예외는 다시 발생
+    except Exception as e:
+        print(f"ERROR: 공유 기록 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"공유 기록 중 서버 오류 발생: {e}")
 
 # 서버 시작
 if __name__ == "__main__":

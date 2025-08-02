@@ -10,6 +10,8 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
+import 'package:kakao_flutter_sdk_share/kakao_flutter_sdk_share.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'PhotoItem.dart';
 import 'game_data_model.dart';
@@ -24,7 +26,9 @@ class KakaoMapPage extends StatefulWidget {
   State<KakaoMapPage> createState() => _KakaoMapPageState();
 }
 
-class _KakaoMapPageState extends State<KakaoMapPage> {
+// 🔥 WidgetsBindingObserver를 구현하여 앱 생명주기 감지
+class _KakaoMapPageState extends State<KakaoMapPage>
+    with WidgetsBindingObserver {
   // --- Map and Core State ---
   late final WebViewController _controller;
   bool isMapLoaded = false;
@@ -54,6 +58,10 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   bool _isMenuOpen = false;
   final Duration _menuAnimationDuration = const Duration(milliseconds: 250);
 
+  // 🔥 공유 진행 상태를 추적하기 위한 변수
+  bool _isSharingInProgress = false;
+  Review? _reviewBeingShared;
+
   // --- Constants ---
   final String serverUrl =
       'https://tourist-app-783243215272.asia-northeast3.run.app';
@@ -75,6 +83,9 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     _fetchLocalImageUrls();
     _initializeWebView();
     _selectedTestPlace = targetKeywords.isNotEmpty ? targetKeywords[0] : null;
+
+    // 🔥 앱 생명주기 감지기 등록
+    WidgetsBinding.instance.addObserver(this);
   }
 
   void _initializeStateFromGameData() {
@@ -98,7 +109,28 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     if (_sessionId != null) {
       _endGameSession();
     }
+    // 🔥 앱 생명주기 감지기 해제
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  // 🔥 앱 상태 변경 감지 메서드
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // 앱이 다시 활성화되었고, 공유가 진행 중이었다면 서버에 알림
+    if (state == AppLifecycleState.resumed && _isSharingInProgress) {
+      if (_reviewBeingShared != null) {
+        // 서버에 알림 (사용자가 공유를 취소했더라도 앱으로 복귀하면 호출됨)
+        _notifyServerOfShare(_reviewBeingShared!);
+        print("공유 흐름을 마치고 앱으로 복귀했습니다. 서버에 알림을 전송합니다.");
+      }
+      // 플래그 초기화
+      setState(() {
+        _isSharingInProgress = false;
+        _reviewBeingShared = null;
+      });
+    }
   }
 
   Future<void> _endGameSession() async {
@@ -2219,6 +2251,193 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
+  // 🔥 서버에 공유 완료를 알리는 함수
+  Future<void> _notifyServerOfShare(Review review) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$serverUrl/shares/record'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': _userId,
+          'review_id': review.reviewId,
+          'platform': 'kakao',
+        }),
+      );
+      if (response.statusCode == 200) {
+        print('서버에 공유 완료를 알렸습니다: ${review.reviewId}');
+      } else {
+        print('서버 공유 알림 실패: ${response.body}');
+      }
+    } catch (e) {
+      print('서버 공유 알림 중 예외 발생: $e');
+    }
+  }
+
+  // ▼▼▼ [수정] 카카오톡 공유 기능 (앱 복귀 감지 로직 적용) ▼▼▼
+  Future<void> _shareReviewViaKakao(Review review) async {
+    if (review.imageUrl == null || review.imageUrl!.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('공유할 이미지가 없습니다.')),
+        );
+      }
+      return;
+    }
+
+    try {
+      // [수정] 1. URL로 이미지를 업로드하기 위해 uploadImage 대신 scrapImage 사용
+      final imageUploadResult =
+          await ShareClient.instance.scrapImage(imageUrl: review.imageUrl!);
+
+      final kakaoImageUrl = imageUploadResult.infos.original.url;
+
+      // 2. 카카오 공유 템플릿 생성
+      final FeedTemplate template = FeedTemplate(
+        content: Content(
+          title: '나만의 서울 여행',
+          description: '장소: ${review.placeName}',
+
+          // [수정] 3. String을 Uri 객체로 변환하여 전달
+          imageUrl: Uri.parse(kakaoImageUrl),
+          link: Link(
+            webUrl: Uri.parse(review.imageUrl!),
+            mobileWebUrl: Uri.parse(review.imageUrl!),
+          ),
+        ),
+        buttons: [
+          Button(
+            title: '자세히 보기',
+            link: Link(
+              webUrl: Uri.parse('https://www.google.com'),
+              mobileWebUrl: Uri.parse('https://www.google.com'),
+            ),
+          )
+        ],
+      );
+
+      // 3. 카카오톡으로 공유 실행
+      bool isKakaoTalkSharingAvailable =
+          await ShareClient.instance.isKakaoTalkSharingAvailable();
+
+      if (isKakaoTalkSharingAvailable) {
+        Uri uri = await ShareClient.instance.shareDefault(template: template);
+        setState(() {
+          _isSharingInProgress = true;
+          _reviewBeingShared = review;
+        });
+        await ShareClient.instance.launchKakaoTalk(uri);
+      } else {
+        Uri shareUrl =
+            await ShareClient.instance.shareDefault(template: template);
+        setState(() {
+          _isSharingInProgress = true;
+          _reviewBeingShared = review;
+        });
+        await launchUrl(shareUrl);
+      }
+    } catch (e) {
+      print('카카오 이미지 스크랩 또는 공유 실패: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('공유에 실패했습니다. 다시 시도해주세요: $e')),
+        );
+      }
+    }
+  }
+
+  // ▼▼▼ [수정] 나의 리뷰 상세 보기 다이얼로그 함수 (공유 버튼 추가) ▼▼▼
+  void _showMyReviewDetailDialog(Review review) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final reviewImageUrl = review.imageUrl;
+
+        return AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Row(
+            children: [
+              const Icon(Icons.location_pin, color: Colors.blue),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  review.placeName,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: MediaQuery.of(context).size.width * 0.9,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (reviewImageUrl != null && reviewImageUrl.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16.0),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12.0),
+                        child: Image.network(
+                          reviewImageUrl,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return Container(
+                              height: 200,
+                              alignment: Alignment.center,
+                              child: const CircularProgressIndicator(),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 200,
+                              color: Colors.grey[200],
+                              alignment: Alignment.center,
+                              child: const Icon(Icons.broken_image,
+                                  color: Colors.grey),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  Text(
+                    review.reviewText,
+                    style: const TextStyle(fontSize: 16.0),
+                  ),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      _formatReviewDate(review.createdAt),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            // [수정] 이미지 여부와 상관없이 항상 공유 버튼 표시
+            TextButton.icon(
+              onPressed: () => _shareReviewViaKakao(review),
+              icon: const Icon(Icons.share),
+              label: const Text('카카오톡 공유하기'),
+            ),
+            // '닫기' 버튼
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('닫기'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ▼▼▼ [수정] 나의 리뷰 목록 UI 변경 및 클릭 이벤트 추가 ▼▼▼
   void _showMyReviewsDialog() {
     showDialog(
       context: context,
@@ -2226,116 +2445,164 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         return AlertDialog(
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          title: const Text('나의 리뷰 목록'),
+          // title을 content 안으로 이동시켜 디자인 통일성 확보
+          titlePadding: EdgeInsets.zero,
+          contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
           content: SizedBox(
             width: double.maxFinite,
-            child: FutureBuilder<List<Review>>(
-              future: _fetchMyReviews(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return const Center(child: Text('리뷰를 불러오는 데 실패했습니다.'));
-                }
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(child: Text('작성한 리뷰가 없습니다.'));
-                }
-
-                final reviews = snapshot.data!;
-                return ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: reviews.length,
-                  itemBuilder: (context, index) {
-                    final review = reviews[index];
-                    final userInfo = review.userInfo;
-                    final userImageUrl = userInfo.profileImageUrl;
-
-                    final String? reviewImageUrl = review.imageUrl;
-
-                    return Card(
-                      margin: const EdgeInsets.symmetric(vertical: 8),
-                      clipBehavior: Clip.antiAlias,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (reviewImageUrl != null &&
-                              reviewImageUrl.isNotEmpty)
-                            Image.network(
-                              reviewImageUrl, // 수정된 URL 사용
-                              width: double.infinity,
-                              height: 150,
-                              fit: BoxFit.cover,
-                              loadingBuilder: (context, child, progress) {
-                                if (progress == null) return child;
-                                return Container(
-                                  height: 150,
-                                  alignment: Alignment.center,
-                                  child: const CircularProgressIndicator(),
-                                );
-                              },
-                              errorBuilder: (context, error, stackTrace) {
-                                print('리뷰 이미지 로드 오류: $error');
-                                return Container(
-                                  height: 150,
-                                  color: Colors.grey[200],
-                                  alignment: Alignment.center,
-                                  child: const Icon(Icons.broken_image,
-                                      color: Colors.grey),
-                                );
-                              },
-                            ),
-                          ListTile(
-                            leading: CircleAvatar(
-                              radius: 20,
-                              backgroundColor: Colors.grey[200],
-                              child: userImageUrl != null &&
-                                      userImageUrl.isNotEmpty
-                                  ? ClipOval(
-                                      child: Image.network(
-                                        userImageUrl,
-                                        fit: BoxFit.cover,
-                                        width: 40,
-                                        height: 40,
-                                        errorBuilder: (c, e, s) => const Icon(
-                                            Icons.person,
-                                            color: Colors.grey),
-                                      ),
-                                    )
-                                  : const Icon(Icons.person,
-                                      color: Colors.grey),
-                            ),
-                            title: Text(review.placeName,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 4.0),
-                              child: Text(
-                                review.reviewText,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: Text(
-                                _formatReviewDate(review.createdAt),
-                                style: TextStyle(
-                                    color: Colors.grey[600], fontSize: 12),
-                              ),
-                            ),
-                          ),
-                        ],
+            // Column으로 감싸서 프로필 헤더와 리뷰 목록을 수직으로 배치
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // --- 사용자 프로필 헤더 ---
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16.0),
+                  child: Row(
+                    children: [
+                      // 카카오 프로필 이미지 또는 기본 아이콘
+                      CircleAvatar(
+                        radius: 22,
+                        backgroundColor: Colors.grey[200],
+                        backgroundImage: _currentUser?.kakaoAccount?.profile
+                                    ?.thumbnailImageUrl !=
+                                null
+                            ? NetworkImage(_currentUser!
+                                .kakaoAccount!.profile!.thumbnailImageUrl!)
+                            : null,
+                        child: _currentUser?.kakaoAccount?.profile
+                                    ?.thumbnailImageUrl ==
+                                null
+                            ? const Icon(Icons.person, color: Colors.grey)
+                            : null,
                       ),
-                    );
-                  },
-                );
-              },
+                      const SizedBox(width: 12),
+                      // 닉네임
+                      Expanded(
+                        child: Text(
+                          _isGuest
+                              ? "게스트"
+                              : _currentUser?.kakaoAccount?.profile?.nickname ??
+                                  '사용자',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // '나의 리뷰' 텍스트
+                      const Text(
+                        "나의 리뷰",
+                        style: TextStyle(fontSize: 16, color: Colors.black54),
+                      )
+                    ],
+                  ),
+                ),
+                // --- 리뷰 목록 ---
+                Flexible(
+                  child: FutureBuilder<List<Review>>(
+                    future: _fetchMyReviews(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return const Center(child: Text('리뷰를 불러오는 데 실패했습니다.'));
+                      }
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return const Center(child: Text('작성한 리뷰가 없습니다.'));
+                      }
+
+                      final reviews = snapshot.data!;
+                      return ListView.builder(
+                        shrinkWrap: true, // 내용만큼만 높이를 차지하도록 설정
+                        itemCount: reviews.length,
+                        itemBuilder: (context, index) {
+                          final review = reviews[index];
+                          final reviewImageUrl = review.imageUrl;
+
+                          // Card를 InkWell로 감싸 클릭 이벤트를 추가
+                          return InkWell(
+                            onTap: () {
+                              _showMyReviewDetailDialog(review);
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Card(
+                              margin: const EdgeInsets.symmetric(vertical: 8),
+                              clipBehavior: Clip.antiAlias,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // 리뷰 이미지가 있을 경우 표시
+                                  if (reviewImageUrl != null &&
+                                      reviewImageUrl.isNotEmpty)
+                                    Image.network(
+                                      reviewImageUrl,
+                                      width: double.infinity,
+                                      height: 150,
+                                      fit: BoxFit.cover,
+                                      loadingBuilder:
+                                          (context, child, progress) {
+                                        if (progress == null) return child;
+                                        return Container(
+                                          height: 150,
+                                          alignment: Alignment.center,
+                                          child:
+                                              const CircularProgressIndicator(),
+                                        );
+                                      },
+                                      errorBuilder:
+                                          (context, error, stackTrace) {
+                                        return Container(
+                                          height: 150,
+                                          color: Colors.grey[200],
+                                          alignment: Alignment.center,
+                                          child: const Icon(Icons.broken_image,
+                                              color: Colors.grey),
+                                        );
+                                      },
+                                    ),
+                                  // 장소 이름과 리뷰 텍스트 (줄바꿈 처리 포함)
+                                  ListTile(
+                                    title: Text(review.placeName,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold)),
+                                    subtitle: Padding(
+                                      padding: const EdgeInsets.only(top: 4.0),
+                                      child: Text(
+                                        review.reviewText,
+                                        maxLines: 2, // 2줄까지만 표시
+                                        overflow: TextOverflow
+                                            .ellipsis, // 넘어가면 ... 처리
+                                      ),
+                                    ),
+                                  ),
+                                  // 리뷰 작성일
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text(
+                                        _formatReviewDate(review.createdAt),
+                                        style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
           actions: [
