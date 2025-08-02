@@ -12,6 +12,7 @@ class QuestType(Enum):
     FIRST_VISIT = "first_visit"        # 첫 방문 퀘스트
     HISTORY_QUIZ = "history_quiz"      # 역사 퀴즈 퀘스트
     VISIT_COUNT = "visit_count"        # 방문 횟수 퀘스트
+    SHARE_IMAGE = "share_image"        # 이미지 공유 퀘스트
 
 # 퀘스트 상태 정의
 class QuestStatus(Enum):
@@ -362,6 +363,30 @@ def create_visit_count_quest(user_id: str) -> Dict[str, Any]:
     }
     return quest_data
 
+def create_share_image_quest(user_id: str) -> Dict[str, Any]:
+    """
+    이미지 공유 퀘스트 생성 함수
+    - user_id: 사용자 ID
+    - 카카오톡으로 이미지를 공유하면 완료되는 퀘스트
+    - 반환: 공유 퀘스트 1개
+    """
+    quest_id = str(uuid.uuid4())
+    today = datetime.now().strftime('%Y-%m-%d')
+    quest_data = {
+        "quest_id": quest_id,
+        "user_id": user_id,
+        "type": QuestType.SHARE_IMAGE.value,
+        "title": "이미지 공유하기",
+        "description": "카카오톡으로 관광지 이미지를 공유해보세요",
+        "is_completed": False,  # 공유 완료 여부
+        "points": 20,  # 공유 퀘스트는 20점
+        "status": QuestStatus.ACTIVE.value,
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "expires_at": datetime.now() + timedelta(days=1),
+        "date": today
+    }
+    return quest_data
+
 def generate_daily_quests(user_id: str) -> List[Dict[str, Any]]:
     """
     일일 테마 미션 퀘스트 3개 + 퀴즈 퀘스트 3개 + 방문 횟수 퀘스트 1개 생성 및 저장
@@ -405,6 +430,10 @@ def generate_daily_quests(user_id: str) -> List[Dict[str, Any]]:
         visit_count_quest = create_visit_count_quest(user_id)
         quests.append(visit_count_quest)
         print(f"   1. 관광지 탐방가 퀘스트 생성 완료 (3곳 방문 필요)")
+        # 1개의 공유 퀘스트 생성
+        share_quest = create_share_image_quest(user_id)
+        quests.append(share_quest)
+        print(f"   1. 이미지 공유하기 퀘스트 생성 완료")
         # 퀘스트 DB에 저장
         for quest in quests:
             quests_ref.document(quest['quest_id']).set(quest)
@@ -413,7 +442,7 @@ def generate_daily_quests(user_id: str) -> List[Dict[str, Any]]:
         for quest in quests:
             converted_quest = convert_timestamps(quest)
             converted_quests.append(converted_quest)
-        print(f"✅ 테마 미션 + 퀴즈 퀘스트 + 방문 횟수 퀘스트 {len(converted_quests)}개 생성 및 저장 완료")
+        print(f"✅ 테마 미션 + 퀴즈 퀘스트 + 방문 횟수 퀘스트 + 공유 퀘스트 {len(converted_quests)}개 생성 및 저장 완료")
         return converted_quests
     except Exception as e:
         print(f"❌ 퀘스트 생성 중 오류: {e}")
@@ -493,6 +522,46 @@ def check_quest_completion(user_id: str, visited_place: str) -> List[Dict[str, A
                 if quest_data['status'] == QuestStatus.REWARD_READY.value:
                     print(f"   ✅ 퀘스트 완료! 보상 지급 준비됨")
                 print(f"   ──────────────────────────────")
+    return completed_quests
+
+def check_share_quest_completion(user_id: str) -> List[Dict[str, Any]]:
+    """
+    공유 퀘스트 완료 여부 확인 및 업데이트
+    - user_id: 사용자 ID
+    - 완료된 공유 퀘스트 리스트 반환
+    """
+    db = initialize_firebase()
+    if not db:
+        return []
+    
+    today = datetime.now().strftime('%Y-%m-%d')
+    quests_ref = db.collection(DAILY_QUESTS_COLLECTION)
+    
+    # 오늘의 활성화된 공유 퀘스트 조회
+    active_share_quests = quests_ref.where('user_id', '==', user_id).where('date', '==', today).where('type', '==', QuestType.SHARE_IMAGE.value).where('status', '==', QuestStatus.ACTIVE.value).get()
+    
+    completed_quests = []
+    
+    for quest_doc in active_share_quests:
+        quest_data = quest_doc.to_dict()
+        
+        # 공유 퀘스트가 이미 완료되었는지 확인
+        if quest_data.get('is_completed', False):
+            # 완료 상태로 업데이트
+            quests_ref.document(quest_data['quest_id']).update({
+                'status': QuestStatus.REWARD_READY.value,
+                'completed_at': firestore.SERVER_TIMESTAMP
+            })
+            
+            quest_data['status'] = QuestStatus.REWARD_READY.value
+            quest_data['completed_at'] = datetime.now()
+            completed_quests.append(quest_data)
+            
+            print(f"🔗 공유 퀘스트 완료! 사용자 {user_id}")
+            print(f"   퀘스트: {quest_data['title']}")
+            print(f"   보상: +{quest_data['points']}점")
+            print(f"   ──────────────────────────────")
+    
     return completed_quests
 
 def submit_quiz_answer(user_id: str, quest_id: str, answer_index: int) -> Dict[str, Any]:
