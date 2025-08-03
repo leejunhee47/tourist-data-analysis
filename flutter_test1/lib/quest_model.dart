@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 // Quest 모델: 개별 퀘스트의 정보를 담습니다.
 class Quest {
   final String questId;
@@ -15,6 +13,8 @@ class Quest {
   final String? quizQuestion; // 퀴즈 관련 필드 [cite: 30, 31]
   final List<String>? quizOptions; // [cite: 31]
   final bool? isAnswered; // [cite: 31]
+  final int currentVisitCount; // 방문 횟수 퀘스트를 위한 필드
+  final bool? isCompleted; // 공유 퀘스트, 퀴즈 퀘스트 등의 완료 여부를 위한 필드 (nullable)
 
   Quest({
     required this.questId,
@@ -25,6 +25,8 @@ class Quest {
     required this.points,
     required this.completedPlaces,
     required this.requiredVisits,
+    required this.currentVisitCount,
+    this.isCompleted,
     this.themeName,
     this.targetPlaces,
     this.quizQuestion,
@@ -42,6 +44,8 @@ class Quest {
       points: json['points'],
       completedPlaces: List<String>.from(json['completed_places'] ?? []),
       requiredVisits: json['required_visits'] ?? 0,
+      currentVisitCount: json['current_visit_count'] as int? ?? 0,
+      isCompleted: json['is_completed'] as bool?,
       themeName: json['theme_name'],
       targetPlaces: json['target_places'] != null
           ? List<String>.from(json['target_places'])

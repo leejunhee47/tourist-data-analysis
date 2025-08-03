@@ -66,6 +66,35 @@ class _LoadingPageState extends State<LoadingPage> {
     }
   }
 
+  Future<List<PhotoItem>> _fetchKeywordSearchPhotos(String keyword) async {
+    try {
+      // 'gallerySearchList1' 엔드포인트 사용
+      final url = Uri.parse('$baseUrl/gallerySearchList1').replace(
+        queryParameters: {
+          'serviceKey': serviceKey,
+          'numOfRows': '5000', // 테스트용으로 100개만 로드
+          'pageNo': '1',
+          'MobileOS': 'ETC',
+          'MobileApp': 'AppTest',
+          'arrange': 'A', // 정렬: A=촬영일, B=제목, C=수정일
+          'keyword': keyword, // 검색할 키워드
+          '_type': 'json',
+        },
+      );
+      final response = await http.get(url);
+      if (response.statusCode == 200) {
+        final items =
+            json.decode(response.body)['response']['body']['items']['item'];
+        if (items is List) {
+          return items.map((item) => PhotoItem.fromJson(item)).toList();
+        }
+      }
+    } catch (e) {
+      print('키워드 검색 사진 로드 오류: $e');
+    }
+    return [];
+  }
+
   // 데이터를 순차적으로 불러오며 진행률을 업데이트하도록 수정
   Future<void> _loadAllGameData() async {
     try {
@@ -81,6 +110,8 @@ class _LoadingPageState extends State<LoadingPage> {
       // 3. 관광지 사진 정보 가져오기
       _updateProgress(0.5, '관광지 사진 로딩 중...');
       final photoData = await _fetchTouristSpotPhotos();
+      // [추가] '서울'을 키워드로 테스트용 사진 데이터 호출
+      final keywordPhotos = await _fetchKeywordSearchPhotos('서울');
 
       // 4. 장소 좌표 및 랭킹 정보 가져오기
       _updateProgress(0.7, '장소 및 랭킹 정보 확인 중...');
@@ -100,6 +131,7 @@ class _LoadingPageState extends State<LoadingPage> {
           const Duration(milliseconds: 500)); // 완료 메시지를 잠시 보여주기 위함
 
       // GameData 객체 생성
+      // [수정] GameData 객체 생성 시, 테스트용 사진 목록을 전달
       final gameData = GameData(
         userId: userId,
         sessionId: sessionId,
@@ -109,6 +141,7 @@ class _LoadingPageState extends State<LoadingPage> {
         visitHistory: userProfile['visit_history'],
         touristSpotPhotos: photoData['touristSpotPhotos']!,
         allSeoulPhotos: photoData['allSeoulPhotos']!,
+        keywordSearchedPhotos: keywordPhotos, // [수정] 추가된 목록 전달
         placeCoords: placeCoords,
         rankings: rankings,
         quests: questData['quests'],

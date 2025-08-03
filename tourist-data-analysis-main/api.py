@@ -18,7 +18,8 @@ from quest_system import (
     claim_quest_reward,
     update_quest_status_only,
     get_quest_progress,
-    create_history_quiz_quests
+    create_history_quiz_quests,
+    check_share_quest_completion
 )
 
 app = FastAPI()
@@ -869,6 +870,7 @@ async def record_share(request: ShareRecordRequest):
     """
     사용자의 공유 활동을 기록합니다.
     - review 문서의 share_count를 1 증가시킵니다.
+    - 공유 퀘스트를 완료 상태로 업데이트합니다.
     """
     try:
         if not db:
@@ -890,7 +892,36 @@ async def record_share(request: ShareRecordRequest):
         transaction = db.transaction()
         update_share_count(transaction, review_ref)
 
+        # 공유 퀘스트 완료 처리
+        today = datetime.now().strftime('%Y-%m-%d')
+        quests_ref = db.collection("daily_quests")
+        
+        # 오늘의 활성화된 공유 퀘스트 조회
+        active_share_quests = quests_ref.where('user_id', '==', request.user_id).where('date', '==', today).where('type', '==', 'share_image').where('status', '==', 'active').get()
+        
+        completed_quests = []
+        for quest_doc in active_share_quests:
+            quest_data = quest_doc.to_dict()
+            
+            # 공유 퀘스트를 완료 상태로 업데이트
+            quests_ref.document(quest_data['quest_id']).update({
+                'is_completed': True,
+                'status': 'reward_ready',
+                'completed_at': firestore.SERVER_TIMESTAMP
+            })
+            
+            quest_data['is_completed'] = True
+            quest_data['status'] = 'reward_ready'
+            quest_data['completed_at'] = datetime.now()
+            completed_quests.append(quest_data)
+            
+            print(f"🔗 공유 퀘스트 완료! 사용자 {request.user_id}")
+            print(f"   퀘스트: {quest_data['title']}")
+            print(f"   보상: +{quest_data['points']}점")
+            print(f"   ──────────────────────────────")
+
         print(f"🔗 공유 기록 완료: Review {request.review_id} by User {request.user_id}")
+        print(f"   완료된 공유 퀘스트: {len(completed_quests)}개")
         return {"message": "공유가 성공적으로 기록되었습니다."}
 
     except HTTPException:
