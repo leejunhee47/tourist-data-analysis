@@ -518,6 +518,11 @@ async def get_places_local_images():
 
 @app.get("/quests/{user_id}")
 async def get_daily_quests(user_id: str):
+    """
+    사용자의 일일 퀘스트를 조회합니다.
+    - 자정이 지났으면 기존 퀘스트를 삭제하고 새로운 퀘스트를 생성합니다.
+    - 자정이 지나지 않았으면 기존 퀘스트를 반환합니다.
+    """
     try:
         quests = generate_daily_quests(user_id)
         return {"user_id": user_id, "quests": quests, "message": "일일 퀘스트를 성공적으로 조회했습니다."}
@@ -528,6 +533,10 @@ async def get_daily_quests(user_id: str):
 
 @app.get("/quests/{user_id}/progress")
 async def get_quest_progress_endpoint(user_id: str):
+    """
+    사용자의 퀘스트 진행 상황을 조회합니다.
+    - 전체 퀘스트 수, 활성 퀘스트 수, 보상 준비된 퀘스트 수 등을 반환합니다.
+    """
     try:
         progress = get_quest_progress(user_id)
         return {"user_id": user_id, "progress": progress, "message": "퀘스트 진행 상황을 성공적으로 조회했습니다."}

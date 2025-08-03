@@ -402,9 +402,30 @@ def generate_daily_quests(user_id: str) -> List[Dict[str, Any]]:
         print(f"✅ Firebase 연결 성공 - 사용자: {user_id}")
         today = datetime.now().strftime('%Y-%m-%d')
         quests_ref = db.collection(DAILY_QUESTS_COLLECTION)
-        # 이미 오늘의 퀘스트가 있으면 반환
+        # 이미 오늘의 퀘스트가 있으면 자정 체크 후 반환
         existing_quests = quests_ref.where('user_id', '==', user_id).where('date', '==', today).get()
         if existing_quests:
+            # 첫 번째 퀘스트의 생성 시간으로 자정 체크
+            first_quest = existing_quests[0].to_dict()
+            created_at = first_quest.get('created_at')
+            
+            # SERVER_TIMESTAMP인 경우 현재 시간으로 변환
+            if created_at == firestore.SERVER_TIMESTAMP:
+                created_at = datetime.now()
+            
+            # 자정이 지났는지 확인 (생성 날짜와 오늘 날짜 비교)
+            if isinstance(created_at, datetime):
+                created_date = created_at.strftime('%Y-%m-%d')
+                if created_date != today:
+                    # 자정이 지났으면 기존 퀘스트 삭제 후 새로 생성
+                    print("🕛 자정이 지나서 퀘스트 초기화 중...")
+                    for quest_doc in existing_quests:
+                        quest_doc.reference.delete()
+                    print("🗑️ 기존 퀘스트 삭제 완료")
+                    # 재귀 호출로 새 퀘스트 생성
+                    return generate_daily_quests(user_id)
+            
+            # 자정이 지나지 않았거나 기존 퀘스트가 유효하면 반환
             quests = []
             for quest_doc in existing_quests:
                 quest_data = quest_doc.to_dict()
@@ -793,3 +814,4 @@ def get_quest_progress(user_id: str) -> Dict[str, Any]:
         "available_reward": available_reward,
         "progress_percentage": (reward_ready_quests + claimed_quests) / total_quests * 100 if total_quests > 0 else 0
     }
+
