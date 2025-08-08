@@ -12,6 +12,7 @@ class GameData {
   final bool isGuest;
   final List<PhotoItem> touristSpotPhotos;
   final List<PhotoItem> allSeoulPhotos;
+  final List<PhotoItem> keywordSearchedPhotos;
   final Map<String, Map<String, double>> placeCoords;
   final List<Map<String, dynamic>> rankings;
   final int totalScore;
@@ -26,6 +27,7 @@ class GameData {
     required this.isGuest,
     required this.touristSpotPhotos,
     required this.allSeoulPhotos,
+    required this.keywordSearchedPhotos,
     required this.placeCoords,
     required this.rankings,
     required this.totalScore,

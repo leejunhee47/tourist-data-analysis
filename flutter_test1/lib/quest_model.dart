@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 // Quest 모델: 개별 퀘스트의 정보를 담습니다.
 class Quest {
   final String questId;
@@ -15,6 +13,8 @@ class Quest {
   final String? quizQuestion; // 퀴즈 관련 필드 [cite: 30, 31]
   final List<String>? quizOptions; // [cite: 31]
   final bool? isAnswered; // [cite: 31]
+  final int currentVisitCount; // 방문 횟수 퀘스트를 위한 필드
+  final bool? isCompleted; // 공유 퀘스트, 퀴즈 퀘스트 등의 완료 여부를 위한 필드 (nullable)
 
   Quest({
     required this.questId,
@@ -25,6 +25,8 @@ class Quest {
     required this.points,
     required this.completedPlaces,
     required this.requiredVisits,
+    required this.currentVisitCount,
+    this.isCompleted,
     this.themeName,
     this.targetPlaces,
     this.quizQuestion,
@@ -34,23 +36,29 @@ class Quest {
 
   factory Quest.fromJson(Map<String, dynamic> json) {
     return Quest(
-      questId: json['quest_id'],
-      title: json['title'],
-      description: json['description'],
-      type: json['type'],
-      status: json['status'],
-      points: json['points'],
-      completedPlaces: List<String>.from(json['completed_places'] ?? []),
-      requiredVisits: json['required_visits'] ?? 0,
-      themeName: json['theme_name'],
+      questId: json['quest_id'] ?? json['questId'] ?? '',
+      title: json['title'] ?? '',
+      description: json['description'] ?? '',
+      type: json['type'] ?? '',
+      status: json['status'] ?? 'active',
+      points: json['points'] ?? 0,
+      completedPlaces: List<String>.from(json['completed_places'] ?? json['completedPlaces'] ?? []),
+      requiredVisits: json['required_visits'] ?? json['requiredVisits'] ?? 0,
+      currentVisitCount: json['current_visit_count'] ?? json['currentVisitCount'] as int? ?? 0,
+      isCompleted: json['is_completed'] ?? json['isCompleted'] as bool?,
+      themeName: json['theme_name'] ?? json['themeName'],
       targetPlaces: json['target_places'] != null
           ? List<String>.from(json['target_places'])
-          : null,
-      quizQuestion: json['quiz_question'],
+          : json['targetPlaces'] != null
+              ? List<String>.from(json['targetPlaces'])
+              : null,
+      quizQuestion: json['quiz_question'] ?? json['quizQuestion'],
       quizOptions: json['quiz_options'] != null
           ? List<String>.from(json['quiz_options'])
-          : null,
-      isAnswered: json['is_answered'],
+          : json['quizOptions'] != null
+              ? List<String>.from(json['quizOptions'])
+              : null,
+      isAnswered: json['is_answered'] ?? json['isAnswered'],
     );
   }
 }

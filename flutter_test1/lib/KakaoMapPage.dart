@@ -10,6 +10,8 @@ import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
+import 'package:kakao_flutter_sdk_share/kakao_flutter_sdk_share.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'PhotoItem.dart';
 import 'game_data_model.dart';
@@ -25,7 +27,9 @@ class KakaoMapPage extends StatefulWidget {
   State<KakaoMapPage> createState() => _KakaoMapPageState();
 }
 
-class _KakaoMapPageState extends State<KakaoMapPage> {
+// 🔥 WidgetsBindingObserver를 구현하여 앱 생명주기 감지
+class _KakaoMapPageState extends State<KakaoMapPage>
+    with WidgetsBindingObserver {
   // --- Map and Core State ---
   late final WebViewController _controller;
   bool isMapLoaded = false;
@@ -44,6 +48,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   late bool _isGuest;
   late List<PhotoItem> _touristSpotPhotos;
   late List<PhotoItem> _allSeoulPhotos;
+  late List<PhotoItem> _keywordSearchedPhotos; // [추가]
   late Map<String, Map<String, double>> _placeCoords;
   late List<Map<String, dynamic>> _rankings;
   late int _totalScore;
@@ -54,6 +59,10 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   // --- UI State for FAB Menu ---
   bool _isMenuOpen = false;
   final Duration _menuAnimationDuration = const Duration(milliseconds: 250);
+
+  // 🔥 공유 진행 상태를 추적하기 위한 변수
+  bool _isSharingInProgress = false;
+  Review? _reviewBeingShared;
 
   // --- Constants ---
   // 서버 URL은 ServerConfig에서 동적으로 가져옴 (디버그/릴리즈 모드에 따라 다름)
@@ -66,6 +75,18 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     '청계천',
     '독립문',
     '서울도서관',
+    '노들섬',
+    '낙산공원',
+    '은평한옥마을',
+    '동대문디자인플라자',
+    '창덕궁',
+    '올림픽공원_들꽃마루',
+    '창경궁',
+    '덕수궁',
+    '숭례문',
+    '롯데타워',
+    '봉은사',
+    '서울숲',
   ];
 
   @override
@@ -75,6 +96,9 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     _fetchLocalImageUrls();
     _initializeWebView();
     _selectedTestPlace = targetKeywords.isNotEmpty ? targetKeywords[0] : null;
+
+    // 🔥 앱 생명주기 감지기 등록
+    WidgetsBinding.instance.addObserver(this);
   }
 
   void _initializeStateFromGameData() {
@@ -85,6 +109,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     _isGuest = gameData.isGuest;
     _touristSpotPhotos = gameData.touristSpotPhotos;
     _allSeoulPhotos = gameData.allSeoulPhotos;
+    _keywordSearchedPhotos = gameData.keywordSearchedPhotos; // [추가]
     _placeCoords = gameData.placeCoords;
     _rankings = gameData.rankings;
     _totalScore = gameData.totalScore;
@@ -98,7 +123,53 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     if (_sessionId != null) {
       _endGameSession();
     }
+    // 🔥 앱 생명주기 감지기 해제
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  // 🔥 앱 상태 변경 감지 메서드
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
+    // async 키워드 추가
+    super.didChangeAppLifecycleState(state);
+    // 앱이 다시 활성화되었고, 이전에 공유가 시작되었다면
+    if (state == AppLifecycleState.resumed && _isSharingInProgress) {
+      // 공유 상태를 즉시 초기화하여 중복 실행 방지
+      final reviewToProcess = _reviewBeingShared;
+      setState(() {
+        _isSharingInProgress = false;
+        _reviewBeingShared = null;
+      });
+
+      // 공유하려던 리뷰가 있는지 확인
+      if (reviewToProcess != null) {
+        print("공유 흐름을 마치고 앱으로 복귀했습니다. 서버에 알림을 전송하고 데이터를 갱신합니다.");
+
+        // 서버에 공유 완료 사실을 알리고 응답을 기다림
+        await _notifyServerOfShare(reviewToProcess);
+
+        // 최신 퀘스트 목록과 진행 상황을 서버에서 다시 불러옴
+        await _fetchQuestsAndProgress();
+
+        // 사용자에게 퀘스트 완료 피드백 제공 (UI 스레드에서 실행 보장)
+        if (mounted) {
+          // 공유 퀘스트가 '보상 받기' 상태로 변경되었는지 확인
+          final isShareQuestReady = _quests.any(
+              (q) => q.type == 'share_image' && q.status == 'reward_ready');
+
+          // if (isShareQuestReady) {
+          //   ScaffoldMessenger.of(context).showSnackBar(
+          //     const SnackBar(
+          //       content: Text('🎉 공유 퀘스트 완료! 보상을 확인하세요.'),
+          //       backgroundColor: Colors.teal,
+          //       behavior: SnackBarBehavior.floating,
+          //     ),
+          //   );
+          // }
+        }
+      }
+    }
   }
 
   Future<void> _endGameSession() async {
@@ -187,7 +258,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           await http.get(Uri.parse('${ServerConfig.serverUrl}/quests/$_userId'));
       final progressResponse =
           await http.get(Uri.parse('${ServerConfig.serverUrl}/quests/$_userId/progress'));
-
       if (questsResponse.statusCode == 200 &&
           progressResponse.statusCode == 200) {
         final questsData = json.decode(utf8.decode(questsResponse.bodyBytes));
@@ -195,9 +265,16 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             json.decode(utf8.decode(progressResponse.bodyBytes));
         if (mounted) {
           setState(() {
-            _quests = (questsData['quests'] as List)
-                .map((q) => Quest.fromJson(q))
-                .toList();
+            // 퀘스트 데이터를 안전하게 변환
+            try {
+              _quests = (questsData['quests'] as List)
+                  .map((q) => Quest.fromJson(q))
+                  .toList();
+            } catch (e) {
+              print('퀘스트 데이터 변환 오류: $e');
+              print('서버 응답 데이터: $questsData');
+              _quests = [];
+            }
             _questProgress = QuestProgress.fromJson(progressData['progress']);
           });
         }
@@ -271,19 +348,33 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
 
   Future<void> _displayTouristPhotos() async {
     if (_touristSpotPhotos.isEmpty || !isMapLoaded) return;
-
     // 서버 주소 (URL 조합을 위해)
     final String serverBaseUrl = ServerConfig.serverUrl;
-
     for (final photo in _touristSpotPhotos) {
       String? matchedPlace;
       for (final placeName in _placeCoords.keys) {
+        // --- [수정 시작] 롯데월드타워 매칭 로직 보강 ---
+        bool isMatch = false;
+
+        // 1. 기존 매칭 로직 (대부분의 경우)
         if (photo.galTitle.contains(placeName) ||
             photo.galSearchKeyword.contains(placeName) ||
             photo.galPhotographyLocation.contains(placeName)) {
+          isMatch = true;
+        }
+        // 2. 롯데타워/롯데월드타워 예외 처리 (양방향 매칭)
+        // 사진 제목이나 좌표 키 중 하나라도 '롯데타워' 관련 단어이면 서로 매칭되도록 처리
+        else if ((photo.galTitle.contains('롯데타워') ||
+                photo.galTitle.contains('롯데월드타워')) &&
+            (placeName == '롯데타워' || placeName == '롯데월드타워')) {
+          isMatch = true;
+        }
+
+        if (isMatch) {
           matchedPlace = placeName;
           break;
         }
+        // --- [수정 종료] ---
       }
 
       if (matchedPlace != null) {
@@ -294,22 +385,29 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               (v['is_correct'] == true || v['is_correct'] == 1),
         );
 
-        // ▼▼▼ [수정] 이미지 URL 선택 로직 ▼▼▼
-        // 1. 로컬 이미지 맵에서 장소 이름으로 이미지 경로를 찾습니다.
-        final String? localImagePath = _localImageUrls[matchedPlace];
+        // [수정] 좌표 키와 관계없이 앱 내 표준 키워드(targetKeywords) 기준으로 제목 통일
+        String canonicalPlaceName = matchedPlace;
+        if (targetKeywords.contains('롯데타워') && (matchedPlace == '롯데월드타워')) {
+          canonicalPlaceName = '롯데타워';
+        }
 
-        // 2. 로컬 이미지가 있으면 서버 주소와 결합하고, 없으면 기존 API 이미지를 사용합니다.
+        // 1. 서버에서 가져온 로컬 이미지 목록(_localImageUrls)에 해당 관광지 이름이 있는지 확인합니다.
+        final String? localImagePath = _localImageUrls[canonicalPlaceName];
+
+        // 2. localImagePath가 null이 아니면(로컬 이미지가 있으면) 해당 경로를 사용하고,
+        //    null이면(로컬 이미지가 없으면) 관광사진 API의 이미지(photo.galWebImageUrl)를 사용합니다.
         final String imageUrl = localImagePath != null
             ? '$serverBaseUrl$localImagePath'
             : photo.galWebImageUrl;
-        // ▲▲▲ [수정] 이미지 URL 선택 로직 ▲▲▲
+
+        final String title = canonicalPlaceName; // 표준 키워드로 제목 설정
 
         final jsCode =
-            "addPhotoMarker(${coords['lat']}, ${coords['lng']}, '$imageUrl', '${photo.galTitle.replaceAll("'", "\\'")}', '${photo.galContentId}', $isVisited);";
+            "addPhotoMarker(${coords['lat']}, ${coords['lng']}, '$imageUrl', '${title.replaceAll("'", "\\'")}', '${photo.galContentId}', $isVisited);";
         try {
           await _controller.runJavaScript(jsCode);
         } catch (e) {
-          print("JS 마커 추가 오류 ($matchedPlace): $e");
+          print("JS 마커 추가 오류 ($canonicalPlaceName): $e");
         }
       } else {
         print("'${photo.galTitle}'에 대한 좌표를 찾지 못했습니다.");
@@ -400,7 +498,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
 
   Future<void> _submitPrediction(File imageFile, String targetPlace) async {
     await _clearMissionHighlight();
-
     if (currentPosition == null) {
       _showPredictionResultOverlay(
         isCorrect: false,
@@ -423,12 +520,10 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       final response = await request.send();
       final responseBody = await response.stream.bytesToString();
       final responseData = json.decode(responseBody);
-
       if (response.statusCode == 200) {
         final bool isCorrect = responseData['is_correct'];
         final String message = responseData['message'];
         final int scoreEarned = responseData['score_earned'] ?? 0;
-
         if (isCorrect) {
           final photoItem = _touristSpotPhotos.firstWhere(
             (p) => p.galTitle.contains(targetPlace),
@@ -532,7 +627,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         ),
       ),
     );
-
     overlay.insert(overlayEntry);
 
     Timer(duration, () {
@@ -873,34 +967,372 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     });
   }
 
+  // [신규] 이미지를 전체 화면 갤러리로 보여주는 함수 (페이지 네비게이션 추가)
+  void _showImageGalleryDialog(List<PhotoItem> photos, String originalTitle) {
+    final PageController pageController = PageController();
+    showDialog(
+      context: context,
+      builder: (context) {
+        int currentPage = 0;
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15.0),
+              ),
+              title: Text(
+                originalTitle,
+                textAlign: TextAlign.center,
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              content: SizedBox(
+                width: MediaQuery.of(context).size.width * 0.8,
+                height: MediaQuery.of(context).size.width * 0.8,
+                child: PageView.builder(
+                  controller: pageController,
+                  itemCount: photos.length,
+                  onPageChanged: (index) {
+                    setState(() {
+                      currentPage = index;
+                    });
+                  },
+                  itemBuilder: (context, index) {
+                    final photo = photos[index];
+                    return InteractiveViewer(
+                      minScale: 1.0,
+                      maxScale: 4.0,
+                      child: Center(
+                        child: Image.network(
+                          photo.galWebImageUrl,
+                          fit: BoxFit.contain,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Icon(Icons.error_outline,
+                                  color: Colors.grey, size: 60),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              // 페이지 네비게이션을 actions 위에 추가
+              actionsPadding: EdgeInsets.zero,
+              actions: [
+                // 페이지 네비게이션 버튼들
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Column(
+                    children: [
+                      // 페이지 카운터 표시
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          '${currentPage + 1} / ${photos.length}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      // 페이지 네비게이션
+                      SizedBox(
+                        height: 40,
+                        child: photos.length <= 10
+                            ? _buildSimplePageNavigation(photos.length,
+                                currentPage, pageController, setState)
+                            : _buildScrollablePageNavigation(photos.length,
+                                currentPage, pageController, setState),
+                      ),
+                      const SizedBox(height: 8),
+                      // 닫기 버튼
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('닫기'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+              contentPadding: const EdgeInsets.all(0),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // 10개 이하의 페이지를 위한 단순한 네비게이션
+  Widget _buildSimplePageNavigation(int totalPages, int currentPage,
+      PageController pageController, StateSetter setState) {
+    return SizedBox(
+      width: double.infinity,
+      child: Center(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // 이전 버튼
+              IconButton(
+                onPressed: currentPage > 0
+                    ? () {
+                        final newPage = currentPage - 1;
+                        pageController.animateToPage(
+                          newPage,
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                        );
+                        setState(() {
+                          currentPage = newPage;
+                        });
+                      }
+                    : null,
+                icon: const Icon(Icons.chevron_left),
+                iconSize: 20,
+              ),
+              // 페이지 번호들
+              ...List.generate(totalPages, (index) {
+                final isSelected = index == currentPage;
+                return GestureDetector(
+                  onTap: () {
+                    pageController.animateToPage(
+                      index,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                    );
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isSelected ? Colors.blue : Colors.transparent,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: isSelected ? Colors.blue : Colors.grey.shade300,
+                      ),
+                    ),
+                    child: Text(
+                      '${index + 1}',
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.black87,
+                        fontSize: 12,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                );
+              }),
+              // 다음 버튼
+              IconButton(
+                onPressed: currentPage < totalPages - 1
+                    ? () {
+                        final newPage = currentPage + 1;
+                        pageController.animateToPage(
+                          newPage,
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                        );
+                        setState(() {
+                          currentPage = newPage;
+                        });
+                      }
+                    : null,
+                icon: const Icon(Icons.chevron_right),
+                iconSize: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 10개 초과의 페이지를 위한 스크롤 가능한 네비게이션
+  Widget _buildScrollablePageNavigation(int totalPages, int currentPage,
+      PageController pageController, StateSetter setState) {
+    return SizedBox(
+      width: double.infinity,
+      child: Row(
+        children: [
+          // 이전 버튼
+          SizedBox(
+            width: 40,
+            child: IconButton(
+              onPressed: currentPage > 0
+                  ? () {
+                      final newPage = currentPage - 1;
+                      pageController.animateToPage(
+                        newPage,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                      );
+                      setState(() {
+                        currentPage = newPage;
+                      });
+                    }
+                  : null,
+              icon: const Icon(Icons.chevron_left),
+              iconSize: 20,
+              padding: EdgeInsets.zero,
+            ),
+          ),
+          // 스크롤 가능한 페이지 번호들
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _buildPageNumbers(
+                    totalPages, currentPage, pageController, setState),
+              ),
+            ),
+          ),
+          // 다음 버튼
+          SizedBox(
+            width: 40,
+            child: IconButton(
+              onPressed: currentPage < totalPages - 1
+                  ? () {
+                      final newPage = currentPage + 1;
+                      pageController.animateToPage(
+                        newPage,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                      );
+                      setState(() {
+                        currentPage = newPage;
+                      });
+                    }
+                  : null,
+              icon: const Icon(Icons.chevron_right),
+              iconSize: 20,
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+// 페이지 번호 위젯들을 생성하는 헬퍼 함수
+  List<Widget> _buildPageNumbers(int totalPages, int currentPage,
+      PageController pageController, StateSetter setState) {
+    List<Widget> pageNumbers = [];
+    // 현재 페이지 주변의 페이지들만 표시하는 로직
+    int start = 0;
+    int end = totalPages - 1;
+    // 페이지가 많을 경우 현재 페이지 주변만 표시
+    if (totalPages > 8) {
+      start = (currentPage - 3).clamp(0, totalPages - 7);
+      end = (start + 6).clamp(6, totalPages - 1);
+
+      // 첫 페이지와 ... 표시
+      if (start > 0) {
+        pageNumbers
+            .add(_buildPageButton(0, currentPage, pageController, setState));
+        if (start > 1) {
+          pageNumbers.add(const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: Text('...', style: TextStyle(fontSize: 12)),
+          ));
+        }
+      }
+    }
+
+    // 메인 페이지 번호들
+    for (int i = start; i <= end; i++) {
+      pageNumbers
+          .add(_buildPageButton(i, currentPage, pageController, setState));
+    }
+
+    // 마지막 페이지와 ... 표시
+    if (totalPages > 7 && end < totalPages - 1) {
+      if (end < totalPages - 2) {
+        pageNumbers.add(const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 4),
+          child: Text('...', style: TextStyle(fontSize: 12)),
+        ));
+      }
+      pageNumbers.add(_buildPageButton(
+          totalPages - 1, currentPage, pageController, setState));
+    }
+
+    return pageNumbers;
+  }
+
+// 개별 페이지 버튼을 생성하는 헬퍼 함수
+  Widget _buildPageButton(int pageIndex, int currentPage,
+      PageController pageController, StateSetter setState) {
+    final isSelected = pageIndex == currentPage;
+    return GestureDetector(
+      onTap: () {
+        pageController.animateToPage(
+          pageIndex,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
+        setState(() {
+          currentPage = pageIndex;
+        });
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: isSelected ? Colors.blue : Colors.grey.shade300,
+          ),
+        ),
+        child: Text(
+          '${pageIndex + 1}',
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.black87,
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showCollectionBookDialog() {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) {
         bool showWeekly = true;
-        final Set<String> brokenUrls = {};
 
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setState) {
             final currentList =
                 showWeekly ? _touristSpotPhotos : _allSeoulPhotos;
-            final displayList = currentList
-                .where((p) => !brokenUrls.contains(p.galWebImageUrl))
-                .toList();
 
-            Widget errorBuilder(String url, Object error) {
-              final bool isPermanentError =
-                  error is NetworkImageLoadException && error.statusCode == 404;
-              if (isPermanentError) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!brokenUrls.contains(url)) {
-                    setState(() => brokenUrls.add(url));
-                  }
-                });
-              }
-              return const SizedBox.shrink();
-            }
+            final Widget errorPlaceholder = Container(
+              alignment: Alignment.center,
+              color: Colors.grey[200],
+              child:
+                  const Icon(Icons.broken_image, color: Colors.grey, size: 40),
+            );
 
             return AlertDialog(
               shape: RoundedRectangleBorder(
@@ -978,7 +1410,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                       ),
                     ),
                     Expanded(
-                      child: displayList.isEmpty
+                      child: currentList.isEmpty
                           ? const Center(child: Text('수집할 관광지 사진이 없습니다.'))
                           : GridView.builder(
                               gridDelegate:
@@ -988,113 +1420,116 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                                 crossAxisSpacing: 10,
                                 mainAxisSpacing: 10,
                               ),
-                              itemCount: displayList.length,
+                              itemCount: currentList.length,
                               itemBuilder: (context, index) {
-                                final photo = displayList[index];
-
-                                // ▼▼▼ [수정] 이미지 URL과 제목을 결정하기 위한 로직 수정 ▼▼▼
-                                String? matchedPlace;
-                                // 1. 사진 정보와 일치하는 장소 이름을 찾습니다. (지도와 동일한 로직)
-                                for (final placeName in _placeCoords.keys) {
-                                  if (photo.galTitle.contains(placeName) ||
-                                      photo.galSearchKeyword
-                                          .contains(placeName) ||
-                                      photo.galPhotographyLocation
-                                          .contains(placeName)) {
-                                    matchedPlace = placeName;
-                                    break;
-                                  }
-                                }
-
+                                final photo = currentList[index];
                                 final isVisited = _visitHistory.any((visit) =>
                                     (visit['is_correct'] == true ||
                                         visit['is_correct'] == 1) &&
                                     photo.galTitle
                                         .contains(visit['target_place']));
 
-                                // 2. 로컬 이미지 경로를 가져옵니다.
-                                final String? localImagePath =
-                                    matchedPlace != null
-                                        ? _localImageUrls[matchedPlace]
-                                        : null;
+                                String finalImageUrl = photo.galWebImageUrl;
+                                String finalTitle = photo.galTitle;
 
-                                // 3. 최종 이미지 URL과 제목을 결정합니다.
-                                final String finalImageUrl;
-                                final String finalTitle;
+                                if (showWeekly) {
+                                  String? matchedPlace;
+                                  for (final keyword in targetKeywords) {
+                                    if (photo.galTitle.contains(keyword)) {
+                                      matchedPlace = keyword;
+                                      break;
+                                    }
+                                  }
 
-                                if (localImagePath != null) {
-                                  // 로컬 이미지가 있으면 로컬 이미지와 장소 이름 사용
-                                  finalImageUrl = '${ServerConfig.serverUrl}$localImagePath';
-                                  finalTitle = matchedPlace!; // 장소 이름을 제목으로 사용
-                                } else {
-                                  // 로컬 이미지가 없으면 API 이미지와 제목 사용
-                                  finalImageUrl = photo.galWebImageUrl;
-                                  finalTitle = photo.galTitle; // 원래 API 제목 사용
+                                  if (matchedPlace != null) {
+                                    finalTitle = matchedPlace;
+                                    final String? localImagePath =
+                                        _localImageUrls[matchedPlace];
+                                    if (localImagePath != null) {
+                                      finalImageUrl =
+                                          '${ServerConfig.serverUrl}$localImagePath';
+                                    }
+                                  }
                                 }
-                                // ▲▲▲ [수정] 로직 종료 ▲▲▲
 
-                                return Card(
-                                  clipBehavior: Clip.antiAlias,
-                                  elevation: 3,
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12)),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      Expanded(
-                                        child: (!showWeekly || isVisited)
-                                            ? Image.network(
-                                                finalImageUrl, // [수정] finalImageUrl 사용
-                                                fit: BoxFit.cover,
-                                                errorBuilder: (c, e, s) =>
-                                                    errorBuilder(
-                                                        finalImageUrl, e))
-                                            : ColorFiltered(
-                                                colorFilter: const ColorFilter
-                                                    .matrix(<double>[
-                                                  0.2126,
-                                                  0.7152,
-                                                  0.0722,
-                                                  0,
-                                                  0,
-                                                  0.2126,
-                                                  0.7152,
-                                                  0.0722,
-                                                  0,
-                                                  0,
-                                                  0.2126,
-                                                  0.7152,
-                                                  0.0722,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  0,
-                                                  1,
-                                                  0,
-                                                ]),
-                                                child: Image.network(
+                                return GestureDetector(
+                                  onTap: () {
+                                    final List<PhotoItem> matchedPhotos =
+                                        _keywordSearchedPhotos
+                                            .where((testPhoto) =>
+                                                testPhoto.galTitle ==
+                                                photo.galTitle)
+                                            .toList();
+
+                                    if (matchedPhotos.isNotEmpty) {
+                                      _showImageGalleryDialog(
+                                          matchedPhotos, photo.galTitle);
+                                    }
+                                  },
+                                  child: Card(
+                                    clipBehavior: Clip.antiAlias,
+                                    elevation: 3,
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(12)),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Expanded(
+                                          child: (!showWeekly || isVisited)
+                                              ? Image.network(
+                                                  finalImageUrl,
+                                                  fit: BoxFit.cover,
+                                                  errorBuilder: (c, e, s) =>
+                                                      errorPlaceholder,
+                                                )
+                                              : ColorFiltered(
+                                                  colorFilter: const ColorFilter
+                                                      .matrix(<double>[
+                                                    0.2126,
+                                                    0.7152,
+                                                    0.0722,
+                                                    0,
+                                                    0,
+                                                    0.2126,
+                                                    0.7152,
+                                                    0.0722,
+                                                    0,
+                                                    0,
+                                                    0.2126,
+                                                    0.7152,
+                                                    0.0722,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    1,
+                                                    0,
+                                                  ]),
+                                                  child: Image.network(
                                                     finalImageUrl,
                                                     fit: BoxFit.cover,
                                                     errorBuilder: (c, e, s) =>
-                                                        errorBuilder(
-                                                            finalImageUrl, e)),
-                                              ),
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: Text(
-                                          finalTitle,
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w500),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
+                                                        errorPlaceholder,
+                                                  ),
+                                                ),
                                         ),
-                                      ),
-                                    ],
+                                        Padding(
+                                          padding: const EdgeInsets.all(8.0),
+                                          child: Text(
+                                            finalTitle,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w500),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 );
                               },
@@ -1287,20 +1722,56 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   }
 
   void _showPhotoDetail(PhotoItem photo) {
-    final matchedPlace = targetKeywords.firstWhere(
-      (p) => photo.galTitle.contains(p),
-      orElse: () => '',
-    );
+    // 더 강력해진 관광지 매칭 로직
+    String matchedPlace = '';
+
+    for (String keyword in targetKeywords) {
+      final title = photo.galTitle;
+      final searchKeyword = photo.galSearchKeyword;
+      final location = photo.galPhotographyLocation;
+
+      bool isMatch = false;
+
+      if (keyword == '롯데타워') {
+        if (title.contains('롯데타워') ||
+            title.contains('롯데월드타워') ||
+            searchKeyword.contains('롯데타워') ||
+            searchKeyword.contains('롯데월드타워') ||
+            location.contains('롯데타워') ||
+            location.contains('롯데월드타워')) {
+          isMatch = true;
+        }
+      } else {
+        if (title.contains(keyword) ||
+            searchKeyword.contains(keyword) ||
+            location.contains(keyword)) {
+          isMatch = true;
+        }
+      }
+
+      if (isMatch) {
+        matchedPlace = keyword;
+        break;
+      }
+    }
+
     final bool isVisited = _visitHistory.any(
       (visit) =>
           visit['target_place'] == matchedPlace &&
           (visit['is_correct'] == true || visit['is_correct'] == 1),
     );
 
-    final String? localImagePath = _localImageUrls[matchedPlace];
+    final String? localImagePath =
+        matchedPlace.isNotEmpty ? _localImageUrls[matchedPlace] : null;
     final String finalImageUrl = localImagePath != null
                     ? '${ServerConfig.serverUrl}$localImagePath'
         : photo.galWebImageUrl;
+
+    // --- [수정 시작] 제목 결정 로직 수정 ---
+    // 미션 관광지인 경우(matchedPlace가 비어있지 않음), 항상 표준 키워드를 제목으로 사용합니다.
+    final String finalTitle =
+        matchedPlace.isNotEmpty ? matchedPlace : photo.galTitle;
+    // --- [수정 종료] ---
 
     showDialog(
       context: context,
@@ -1313,7 +1784,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
               shape: const RoundedRectangleBorder(
                   borderRadius:
                       BorderRadius.vertical(top: Radius.circular(12))),
-              title: Text(photo.galTitle,
+              title: Text(finalTitle, // 수정된 제목(finalTitle) 사용
                   style: const TextStyle(
                       fontSize: 18, fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis),
@@ -1332,10 +1803,8 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                   children: [
                     ConstrainedBox(
                       constraints: BoxConstraints(
-                        maxHeight: MediaQuery.of(context).size.height *
-                            0.4, // 화면 높이의 40%로 제한
+                        maxHeight: MediaQuery.of(context).size.height * 0.4,
                       ),
-                      // [수정] photo.galWebImageUrl 대신 finalImageUrl 사용
                       child: Image.network(
                         finalImageUrl,
                         fit: BoxFit.contain,
@@ -1353,7 +1822,7 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Title: ${photo.galTitle}',
+                          Text('Title: $finalTitle', // 수정된 제목(finalTitle) 사용
                               style: const TextStyle(
                                   fontWeight: FontWeight.bold, fontSize: 16)),
                           const SizedBox(height: 8),
@@ -1657,7 +2126,21 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   }
 
   Widget _buildActiveQuestCard(Quest quest, StateSetter setDialogState) {
-    final questIcon = _getIconForQuestType(quest.type);
+    IconData questIcon;
+
+    // 1. 퀘스트 제목(title)으로 특정 테마 미션을 먼저 확인합니다.
+    if (quest.title == '조선왕조의 발자취') {
+      questIcon = Icons.temple_buddhist_outlined; // 궁궐 모양 아이콘
+    } else if (quest.title == '도심 속 자연 탐방') {
+      questIcon = Icons.forest_outlined; // 공원/숲 아이콘
+    } else if (quest.title == '전통 문화 체험') {
+      questIcon = Icons.rice_bowl_outlined; // 박물관/문화 아이콘
+    } else if (quest.title == '이미지 공유하기') {
+      questIcon = Icons.share_outlined;
+    } else {
+      // 2. 그 외의 퀘스트는 기존처럼 타입(type)으로 아이콘을 결정합니다.
+      questIcon = _getIconForQuestType(quest.type);
+    }
 
     if (quest.type == 'history_quiz' && quest.isAnswered != true) {
       return Card(
@@ -1720,18 +2203,29 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
       );
     }
 
+    String subtitleText;
+    if (quest.type == 'visit_count') {
+      subtitleText = '목표: ${quest.currentVisitCount} / ${quest.requiredVisits}';
+    } else if (quest.type == 'share_image') {
+      final progress = quest.isCompleted == true ? 1 : 0;
+      subtitleText = '목표: $progress / 1';
+    } else {
+      subtitleText =
+          '목표: ${quest.completedPlaces.length} / ${quest.requiredVisits}';
+    }
+
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12.0)), // 모양은 원래대로 통일
       child: ListTile(
-        leading: Icon(questIcon, color: Colors.blue.shade700),
+        leading: Icon(questIcon, color: Colors.blue.shade700), // 결정된 아이콘 사용
         title: Text(
           quest.title,
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
         ),
-        subtitle: Text(
-            '목표: ${quest.completedPlaces.length} / ${quest.requiredVisits}',
-            style: TextStyle(color: Colors.grey.shade600)),
+        subtitle:
+            Text(subtitleText, style: TextStyle(color: Colors.grey.shade600)),
       ),
     );
   }
@@ -1811,7 +2305,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           message: result['message'],
           scoreEarned: 0,
         );
-
         await Future.wait([_fetchQuestsAndProgress(), _fetchUserProfile()]);
         setDialogState(() {});
       } else {
@@ -1838,7 +2331,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     required int scoreEarned,
   }) {
     if (!mounted) return;
-
     final Widget resultTitle = Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -1854,7 +2346,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         ),
       ],
     );
-
     Widget resultContent;
     if (isCorrect && scoreEarned > 0) {
       resultContent = Column(
@@ -1896,7 +2387,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         ),
       ),
     );
-
     _showAutoDismissingOverlay(
       child: overlayContent,
       duration: const Duration(seconds: 3),
@@ -1920,7 +2410,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
           message: '퀘스트 완료!',
           scoreEarned: rewardPoints,
         );
-
         await Future.wait([_fetchQuestsAndProgress(), _fetchUserProfile()]);
         setDialogState(() {});
       } else {
@@ -1976,7 +2465,6 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
   void _showReviewDialog(String placeName, File imageFile) {
     final reviewController = TextEditingController();
     final formKey = GlobalKey<FormState>();
-
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -2049,10 +2537,8 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
             ..files.add(
               await http.MultipartFile.fromPath('image', imageFile.path),
             );
-
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
-
       if (mounted) {
         if (response.statusCode == 200) {
           final data = json.decode(utf8.decode(response.bodyBytes));
@@ -2219,6 +2705,190 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
     );
   }
 
+  // 🔥 서버에 공유 완료를 알리는 함수
+  Future<void> _notifyServerOfShare(Review review) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${ServerConfig.serverUrl}/shares/record'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': _userId,
+          'review_id': review.reviewId,
+          'platform': 'kakao',
+        }),
+      );
+      if (response.statusCode == 200) {
+        print('서버에 공유 완료를 알렸습니다: ${review.reviewId}');
+      } else {
+        print('서버 공유 알림 실패: ${response.body}');
+      }
+    } catch (e) {
+      print('서버 공유 알림 중 예외 발생: $e');
+    }
+  }
+
+  // ▼▼▼ [수정] 카카오톡 공유 기능 (앱 복귀 감지 로직 적용) ▼▼▼
+  Future<void> _shareReviewViaKakao(Review review) async {
+    if (review.imageUrl == null || review.imageUrl!.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('공유할 이미지가 없습니다.')),
+        );
+      }
+      return;
+    }
+
+    try {
+      // [수정] 1. URL로 이미지를 업로드하기 위해 uploadImage 대신 scrapImage 사용
+      final imageUploadResult =
+          await ShareClient.instance.scrapImage(imageUrl: review.imageUrl!);
+      final kakaoImageUrl = imageUploadResult.infos.original.url;
+
+      // 2. 카카오 공유 템플릿 생성
+      final FeedTemplate template = FeedTemplate(
+        content: Content(
+          title: '나만의 서울 여행',
+          description: '장소: ${review.placeName}',
+
+          // [수정] 3. String을 Uri 객체로 변환하여 전달
+          imageUrl: Uri.parse(kakaoImageUrl),
+          link: Link(
+            webUrl: Uri.parse(review.imageUrl!),
+            mobileWebUrl: Uri.parse(review.imageUrl!),
+          ),
+        ),
+        buttons: [
+          Button(
+            title: '자세히 보기',
+            link: Link(
+              webUrl: Uri.parse('https://www.google.com'),
+              mobileWebUrl: Uri.parse('https://www.google.com'),
+            ),
+          )
+        ],
+      );
+      // 3. 카카오톡으로 공유 실행
+      bool isKakaoTalkSharingAvailable =
+          await ShareClient.instance.isKakaoTalkSharingAvailable();
+      if (isKakaoTalkSharingAvailable) {
+        Uri uri = await ShareClient.instance.shareDefault(template: template);
+        setState(() {
+          _isSharingInProgress = true;
+          _reviewBeingShared = review;
+        });
+        await ShareClient.instance.launchKakaoTalk(uri);
+      } else {
+        Uri shareUrl =
+            await ShareClient.instance.shareDefault(template: template);
+        setState(() {
+          _isSharingInProgress = true;
+          _reviewBeingShared = review;
+        });
+        await launchUrl(shareUrl);
+      }
+    } catch (e) {
+      print('카카오 이미지 스크랩 또는 공유 실패: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('공유에 실패했습니다. 다시 시도해주세요: $e')),
+        );
+      }
+    }
+  }
+
+  // ▼▼▼ [수정] 나의 리뷰 상세 보기 다이얼로그 함수 (공유 버튼 추가) ▼▼▼
+  void _showMyReviewDetailDialog(Review review) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final reviewImageUrl = review.imageUrl;
+
+        return AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Row(
+            children: [
+              const Icon(Icons.location_pin, color: Colors.blue),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  review.placeName,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: MediaQuery.of(context).size.width * 0.9,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (reviewImageUrl != null && reviewImageUrl.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16.0),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12.0),
+                        child: Image.network(
+                          reviewImageUrl,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return Container(
+                              height: 200,
+                              alignment: Alignment.center,
+                              child: const CircularProgressIndicator(),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 200,
+                              color: Colors.grey[200],
+                              alignment: Alignment.center,
+                              child: const Icon(Icons.broken_image,
+                                  color: Colors.grey),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  Text(
+                    review.reviewText,
+                    style: const TextStyle(fontSize: 16.0),
+                  ),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      _formatReviewDate(review.createdAt),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            // [수정] 이미지 여부와 상관없이 항상 공유 버튼 표시
+            TextButton.icon(
+              onPressed: () => _shareReviewViaKakao(review),
+              icon: const Icon(Icons.share),
+              label: const Text('카카오톡 공유하기'),
+            ),
+            // '닫기' 버튼
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('닫기'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ▼▼▼ [수정] 나의 리뷰 목록 UI 변경 및 클릭 이벤트 추가 ▼▼▼
   void _showMyReviewsDialog() {
     showDialog(
       context: context,
@@ -2226,105 +2896,164 @@ class _KakaoMapPageState extends State<KakaoMapPage> {
         return AlertDialog(
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          title: const Text('나의 리뷰 목록'),
+          // title을 content 안으로 이동시켜 디자인 통일성 확보
+          titlePadding: EdgeInsets.zero,
+          contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
           content: SizedBox(
             width: double.maxFinite,
-            child: FutureBuilder<List<Review>>(
-              future: _fetchMyReviews(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return const Center(child: Text('리뷰를 불러오는 데 실패했습니다.'));
-                }
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(child: Text('작성한 리뷰가 없습니다.'));
-                }
+            // Column으로 감싸서 프로필 헤더와 리뷰 목록을 수직으로 배치
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // --- 사용자 프로필 헤더 ---
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16.0),
+                  child: Row(
+                    children: [
+                      // 카카오 프로필 이미지 또는 기본 아이콘
+                      CircleAvatar(
+                        radius: 22,
+                        backgroundColor: Colors.grey[200],
+                        backgroundImage: _currentUser?.kakaoAccount?.profile
+                                    ?.thumbnailImageUrl !=
+                                null
+                            ? NetworkImage(_currentUser!
+                                .kakaoAccount!.profile!.thumbnailImageUrl!)
+                            : null,
+                        child: _currentUser?.kakaoAccount?.profile
+                                    ?.thumbnailImageUrl ==
+                                null
+                            ? const Icon(Icons.person, color: Colors.grey)
+                            : null,
+                      ),
+                      const SizedBox(width: 12),
+                      // 닉네임
+                      Expanded(
+                        child: Text(
+                          _isGuest
+                              ? "게스트"
+                              : _currentUser?.kakaoAccount?.profile?.nickname ??
+                                  '사용자',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // '나의 리뷰' 텍스트
+                      const Text(
+                        "나의 리뷰",
+                        style: TextStyle(fontSize: 16, color: Colors.black54),
+                      )
+                    ],
+                  ),
+                ),
+                // --- 리뷰 목록 ---
+                Flexible(
+                  child: FutureBuilder<List<Review>>(
+                    future: _fetchMyReviews(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return const Center(child: Text('리뷰를 불러오는 데 실패했습니다.'));
+                      }
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return const Center(child: Text('작성한 리뷰가 없습니다.'));
+                      }
 
-                final reviews = snapshot.data!;
-                return ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: reviews.length,
-                  itemBuilder: (context, index) {
-                    final review = reviews[index];
-                    final userInfo = review.userInfo;
-                    final userImageUrl = userInfo.profileImageUrl;
+                      final reviews = snapshot.data!;
+                      return ListView.builder(
+                        shrinkWrap: true, // 내용만큼만 높이를 차지하도록 설정
+                        itemCount: reviews.length,
+                        itemBuilder: (context, index) {
+                          final review = reviews[index];
+                          final reviewImageUrl = review.imageUrl;
 
-                    final String? reviewImageUrl = review.imageUrl;
-
-                    return Card(
-                      margin: const EdgeInsets.symmetric(vertical: 8),
-                      clipBehavior: Clip.antiAlias,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (reviewImageUrl != null &&
-                              reviewImageUrl.isNotEmpty)
-                            Image.network(
-                              reviewImageUrl, // 수정된 URL 사용
-                              width: double.infinity,
-                              height: 150,
-                              fit: BoxFit.cover,
-                              loadingBuilder: (context, child, progress) {
-                                if (progress == null) return child;
-                                return Container(
-                                  height: 150,
-                                  alignment: Alignment.center,
-                                  child: const CircularProgressIndicator(),
-                                );
-                              },
-                              errorBuilder: (context, error, stackTrace) {
-                                print('리뷰 이미지 로드 오류: $error');
-                                return Container(
-                                  height: 150,
-                                  color: Colors.grey[200],
-                                  alignment: Alignment.center,
-                                  child: const Icon(Icons.broken_image,
-                                      color: Colors.grey),
-                                );
-                              },
-                            ),
-                          ListTile(
-                            leading: CircleAvatar(
-                              radius: 20,
-                              backgroundColor: Colors.grey[200],
-                              child: userImageUrl != null &&
-                                      userImageUrl.isNotEmpty
-                                  ? ClipOval(
-                                      child: Image.network(
-                                        userImageUrl,
-                                        fit: BoxFit.cover,
-                                        width: 40,
-                                        height: 40,
-                                        errorBuilder: (c, e, s) => const Icon(
-                                            Icons.person,
-                                            color: Colors.grey),
+                          // Card를 InkWell로 감싸 클릭 이벤트를 추가
+                          return InkWell(
+                            onTap: () {
+                              _showMyReviewDetailDialog(review);
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Card(
+                              margin: const EdgeInsets.symmetric(vertical: 8),
+                              clipBehavior: Clip.antiAlias,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // 리뷰 이미지가 있을 경우 표시
+                                  if (reviewImageUrl != null &&
+                                      reviewImageUrl.isNotEmpty)
+                                    Image.network(
+                                      reviewImageUrl,
+                                      width: double.infinity,
+                                      height: 150,
+                                      fit: BoxFit.cover,
+                                      loadingBuilder:
+                                          (context, child, progress) {
+                                        if (progress == null) return child;
+                                        return Container(
+                                          height: 150,
+                                          alignment: Alignment.center,
+                                          child:
+                                              const CircularProgressIndicator(),
+                                        );
+                                      },
+                                      errorBuilder:
+                                          (context, error, stackTrace) {
+                                        return Container(
+                                          height: 150,
+                                          color: Colors.grey[200],
+                                          alignment: Alignment.center,
+                                          child: const Icon(Icons.broken_image,
+                                              color: Colors.grey),
+                                        );
+                                      },
+                                    ),
+                                  // 장소 이름과 리뷰 텍스트 (줄바꿈 처리 포함)
+                                  ListTile(
+                                    title: Text(review.placeName,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold)),
+                                    subtitle: Padding(
+                                      padding: const EdgeInsets.only(top: 4.0),
+                                      child: Text(
+                                        review.reviewText,
+                                        maxLines: 2, // 2줄까지만 표시
+                                        overflow: TextOverflow
+                                            .ellipsis, // 넘어가면 ... 처리
                                       ),
-                                    )
-                                  : const Icon(Icons.person,
-                                      color: Colors.grey),
-                            ),
-                            title: Text(review.placeName,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 4.0),
-                              child: Text(
-                                review.reviewText,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  // 리뷰 작성일
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text(
+                                        _formatReviewDate(review.createdAt),
+                                        style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
           actions: [

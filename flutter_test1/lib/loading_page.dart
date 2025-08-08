@@ -46,6 +46,18 @@ class _LoadingPageState extends State<LoadingPage> {
     '청계천',
     '독립문',
     '서울도서관',
+    '노들섬',
+    '낙산공원',
+    '은평한옥마을',
+    '동대문디자인플라자',
+    '창덕궁',
+    '올림픽공원_들꽃마루',
+    '창경궁',
+    '덕수궁',
+    '숭례문',
+    '롯데타워',
+    '봉은사',
+    '서울숲',
   ];
 
   @override
@@ -64,6 +76,35 @@ class _LoadingPageState extends State<LoadingPage> {
         _loadingMessage = message;
       });
     }
+  }
+
+  Future<List<PhotoItem>> _fetchKeywordSearchPhotos(String keyword) async {
+    try {
+      // 'gallerySearchList1' 엔드포인트 사용
+      final url = Uri.parse('$baseUrl/gallerySearchList1').replace(
+        queryParameters: {
+          'serviceKey': serviceKey,
+          'numOfRows': '5000',
+          'pageNo': '1',
+          'MobileOS': 'ETC',
+          'MobileApp': 'AppTest',
+          'arrange': 'A', // 정렬: A=촬영일, B=제목, C=수정일
+          'keyword': keyword, // 검색할 키워드
+          '_type': 'json',
+        },
+      );
+      final response = await http.get(url);
+      if (response.statusCode == 200) {
+        final items =
+            json.decode(response.body)['response']['body']['items']['item'];
+        if (items is List) {
+          return items.map((item) => PhotoItem.fromJson(item)).toList();
+        }
+      }
+    } catch (e) {
+      print('키워드 검색 사진 로드 오류: $e');
+    }
+    return [];
   }
 
   // 데이터를 순차적으로 불러오며 진행률을 업데이트하도록 수정
@@ -97,6 +138,8 @@ class _LoadingPageState extends State<LoadingPage> {
       // 3. 관광지 사진 정보 가져오기
       _updateProgress(0.5, '관광지 사진 로딩 중...');
       final photoData = await _fetchTouristSpotPhotos();
+      // [추가] '서울'을 키워드로 테스트용 사진 데이터 호출
+      final keywordPhotos = await _fetchKeywordSearchPhotos('서울');
 
       // 4. 장소 좌표 및 랭킹 정보 가져오기
       _updateProgress(0.7, '장소 및 랭킹 정보 확인 중...');
@@ -116,6 +159,7 @@ class _LoadingPageState extends State<LoadingPage> {
           const Duration(milliseconds: 500)); // 완료 메시지를 잠시 보여주기 위함
 
       // GameData 객체 생성
+      // [수정] GameData 객체 생성 시, 테스트용 사진 목록을 전달
       final gameData = GameData(
         userId: userId,
         sessionId: sessionId,
@@ -125,6 +169,7 @@ class _LoadingPageState extends State<LoadingPage> {
         visitHistory: userProfile['visit_history'],
         touristSpotPhotos: photoData['touristSpotPhotos']!,
         allSeoulPhotos: photoData['allSeoulPhotos']!,
+        keywordSearchedPhotos: keywordPhotos, // [수정] 추가된 목록 전달
         placeCoords: placeCoords,
         rankings: rankings,
         quests: questData['quests'],
@@ -158,41 +203,19 @@ class _LoadingPageState extends State<LoadingPage> {
         : widget.user?.kakaoAccount?.profile?.thumbnailImageUrl;
 
     if (username == null) return null;
-    
-    // 재시도 로직 추가
-    int retryCount = 0;
-    const maxRetries = 3;
-    
-    while (retryCount < maxRetries) {
-      try {
-        print('서버 연결 시도 ${retryCount + 1}/$maxRetries: ${ServerConfig.serverUrl}/create_user/');
-        
-        final response = await http.post(
-          Uri.parse('${ServerConfig.serverUrl}/create_user/'),
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode(
-              {'username': username, 'profile_image_url': profileImageUrl ?? ''}),
-        ).timeout(const Duration(seconds: 10)); // 타임아웃 추가
-        
-        if (response.statusCode == 200) {
-          final responseData = json.decode(utf8.decode(response.bodyBytes));
-          print('사용자 생성 성공: ${responseData['user_id']}');
-          return responseData['user_id'];
-        } else {
-          print('서버 응답 오류: ${response.statusCode} - ${response.body}');
-        }
-      } catch (e) {
-        print('User creation/retrieval error (시도 ${retryCount + 1}): $e');
-        retryCount++;
-        
-        if (retryCount < maxRetries) {
-          print('${retryCount}초 후 재시도합니다...');
-          await Future.delayed(Duration(seconds: retryCount));
-        }
+    try {
+      final response = await http.post(
+        Uri.parse('${ServerConfig.serverUrl}/create_user/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(
+            {'username': username, 'profile_image_url': profileImageUrl ?? ''}),
+      );
+      if (response.statusCode == 200) {
+        return json.decode(utf8.decode(response.bodyBytes))['user_id'];
       }
+    } catch (e) {
+      print('User creation/retrieval error: $e');
     }
-    
-    print('사용자 생성 실패: 최대 재시도 횟수 초과');
     return null;
   }
 
@@ -242,7 +265,22 @@ class _LoadingPageState extends State<LoadingPage> {
 
       for (final keyword in List.from(keywordsToFind)) {
         for (final photo in seoulPhotos) {
-          if (photo.galTitle.toLowerCase().contains(keyword.toLowerCase())) {
+          final photoTitleLower = photo.galTitle.toLowerCase();
+          bool isMatch = false;
+
+          // [수정] '롯데타워' 검색 로직 확장
+          if (keyword == '롯데타워') {
+            if (photoTitleLower.contains('롯데타워') ||
+                photoTitleLower.contains('롯데월드타워')) {
+              isMatch = true;
+            }
+          } else {
+            if (photoTitleLower.contains(keyword.toLowerCase())) {
+              isMatch = true;
+            }
+          }
+
+          if (isMatch) {
             foundPhotosMap[keyword] = photo;
             keywordsToFind.remove(keyword);
             break;
@@ -280,7 +318,7 @@ class _LoadingPageState extends State<LoadingPage> {
 
   Future<Map<String, Map<String, double>>> _fetchPlaceCoordinates() async {
     try {
-      final response = await http.get(Uri.parse('${ServerConfig.serverUrl}/places/'));
+              final response = await http.get(Uri.parse('${ServerConfig.serverUrl}/places/'));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         final List<dynamic> places = data['places'];
@@ -301,7 +339,7 @@ class _LoadingPageState extends State<LoadingPage> {
 
   Future<List<Map<String, dynamic>>> _fetchRankings() async {
     try {
-      final response = await http.get(Uri.parse('${ServerConfig.serverUrl}/rankings/'));
+              final response = await http.get(Uri.parse('${ServerConfig.serverUrl}/rankings/'));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         return List<Map<String, dynamic>>.from(data['rankings']);
@@ -324,10 +362,24 @@ class _LoadingPageState extends State<LoadingPage> {
         final questsData = json.decode(utf8.decode(questsResponse.bodyBytes));
         final progressData =
             json.decode(utf8.decode(progressResponse.bodyBytes));
+        
+        // 퀘스트 데이터를 안전하게 변환
+        List<Quest> quests = [];
+        if (questsData['quests'] != null) {
+          try {
+            quests = (questsData['quests'] as List)
+                .map((q) => Quest.fromJson(q))
+                .toList();
+          } catch (e) {
+            print('퀘스트 데이터 변환 오류: $e');
+            print('서버 응답 데이터: $questsData');
+            // 오류 발생 시 빈 리스트 반환
+            quests = [];
+          }
+        }
+        
         return {
-          'quests': (questsData['quests'] as List)
-              .map((q) => Quest.fromJson(q))
-              .toList(),
+          'quests': quests,
           'questProgress': QuestProgress.fromJson(progressData['progress']),
         };
       }

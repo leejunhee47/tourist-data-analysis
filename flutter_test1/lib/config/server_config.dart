@@ -1,41 +1,50 @@
 import 'package:flutter/foundation.dart';
 
 /// 서버 설정을 관리하는 클래스
-/// 디버그 모드에서는 로컬 서버를, 릴리즈 모드에서는 클라우드 서버를 사용합니다.
 class ServerConfig {
-  // 로컬 서버 URL (개발용)
-  static const String _localServerUrl = 'http://10.0.2.2:8000';
-  
-  // 클라우드 서버 URL (프로덕션용)
-  static const String _cloudServerUrl = 'https://tourist-app-783243215272.asia-northeast3.run.app';
-  
-  /// 현재 모드에 따라 적절한 서버 URL을 반환합니다.
-  /// 디버그 모드에서는 로컬 서버를, 릴리즈 모드에서는 클라우드 서버를 사용합니다.
+  /// 현재 모드에 따른 서버 URL을 반환
   static String get serverUrl {
-    if (kDebugMode) {
-      // 디버그 모드에서는 로컬 서버 사용
-      return _localServerUrl;
+    // kReleaseMode를 사용하여 릴리즈 빌드인지 확인
+    if (kReleaseMode) {
+      // 릴리즈 빌드에서는 실제 서버 URL 사용
+      return 'https://tourist-app-783243215272.asia-northeast3.run.app';
     } else {
-      // 릴리즈 모드에서는 클라우드 서버 사용
-      return _cloudServerUrl;
+      // 디버그 빌드에서는 로컬 서버 사용
+      return 'http://10.0.2.2:8000'; // Android 에뮬레이터용
+      // return 'http://localhost:8000'; // 실제 디바이스용
     }
   }
-  
-  /// 현재 서버 설정 정보를 디버깅용으로 반환합니다.
-  static String get debugInfo {
-    return '''
-=== 서버 설정 정보 ===
-현재 모드: ${kDebugMode ? '디버그' : '릴리즈'}
-서버 URL: $serverUrl
-로컬 서버 URL: $_localServerUrl
-클라우드 서버 URL: $_cloudServerUrl
-==================
-''';
+
+  /// 디버그 빌드인지 확인하는 메서드
+  static bool _isDebugBuild() {
+    // kReleaseMode의 반대값을 사용
+    return !kReleaseMode;
+  }
+
+  /// API 엔드포인트를 포함한 전체 URL을 반환
+  static String getApiUrl(String endpoint) {
+    return '$serverUrl/$endpoint';
+  }
+
+  /// 현재 모드 정보를 반환 (디버깅용)
+  static String get modeInfo {
+    return _isDebugBuild() ? 'Debug APK' : 'Release APK';
+  }
+
+  /// 빌드 타입 상세 정보 (디버깅용)
+  static String get buildInfo {
+    return _isDebugBuild() 
+        ? 'Debug APK - 로컬 서버 사용 (10.0.2.2:8000)'
+        : 'Release APK - 실제 서버 사용 (tourist-app-783243215272.asia-northeast3.run.app)';
   }
   
-  /// 로컬 서버 URL을 직접 반환합니다.
-  static String get localServerUrl => _localServerUrl;
-  
-  /// 클라우드 서버 URL을 직접 반환합니다.
-  static String get cloudServerUrl => _cloudServerUrl;
+  /// 서버 연결 테스트용 메서드
+  static String get debugInfo {
+    return '''
+    서버 설정 정보:
+    - 현재 모드: ${modeInfo}
+    - 서버 URL: $serverUrl
+    - 빌드 정보: $buildInfo
+    ''';
+  }
 } 
