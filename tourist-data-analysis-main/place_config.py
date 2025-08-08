@@ -3,7 +3,7 @@
 """
 from math import radians, sin, cos, sqrt, atan2
 
-# 관광지 좌표 (위도, 경도)
+# 관광지 좌표 (위도, 경도) - 20개로 확장
 PLACE_COORDINATES = {
     '경복궁': (37.5796, 126.9770),
     '경희궁': (37.5704, 126.9682),
@@ -12,10 +12,23 @@ PLACE_COORDINATES = {
     '북촌한옥마을': (37.5825, 126.9849),
     '청계천': (37.5697, 126.9975),
     '독립문': (37.5725, 126.9595),
-    '서울도서관': (37.5664, 126.9780)
+    '서울도서관': (37.5664, 126.9780),
+    # 새로 추가된 12개 관광지
+    '덕수궁': (37.565868267518624, 126.97424381539585),
+    '롯데월드타워': (37.51363928083549, 127.10410095607976),
+    '봉은사': (37.515374877526746, 127.0557872394075),
+    '서울숲': (37.54510104105791, 127.03931664772371),
+    '숭례문': (37.55998949440461, 126.9753153923009),
+    '창경궁': (37.57878675151702, 126.99539806734482),
+    '낙산공원': (37.58044, 127.0076),
+    '노들섬': (37.51791, 126.9580),
+    '동대문디자인플라자': (37.56674, 127.0084),
+    '올림픽공원': (37.5134819, 127.1255077),
+    '은평한옥마을': (37.6408878, 126.9385532),
+    '창덕궁': (37.5793717, 126.9911029)
 }
 
-# 장소 매핑 (한글 -> 영어)
+# 장소 매핑 (한글 -> 영어) - 20개로 확장
 PLACE_MAPPING = {
     '경복궁': 'Gyeongbokgung Palace',
     '경희궁': 'Gyeonghui Palace', 
@@ -24,7 +37,20 @@ PLACE_MAPPING = {
     '북촌한옥마을': 'Bukchon Hanok Village',
     '청계천': 'Cheonggyecheon Stream',
     '독립문': 'Independence Gate',
-    '서울도서관': 'Seoul Metropolitan Library'
+    '서울도서관': 'Seoul Metropolitan Library',
+    # 새로 추가된 12개 관광지
+    '덕수궁': 'Deoksugung Palace',
+    '롯데타워': 'Lotte Tower',
+    '봉은사': 'Bongeunsa Temple',
+    '서울숲': 'Seoul Forest',
+    '숭례문': 'Sungnyemun Gate',
+    '창경궁': 'Changgyeonggung Palace',
+    '낙산공원': 'Naksan Park',
+    '노들섬': 'Nodeulseom Island',
+    '동대문디자인플라자': 'Dongdaemun Design Plaza',
+    '올림픽공원': 'Olympic Park',
+    '은평한옥마을': 'Eunpyeong Hanok Village',
+    '창덕궁': 'Changdeokgung Palace'
 }
 
 def calculate_distance_km(lat1, lon1, lat2, lon2):

@@ -18,7 +18,8 @@ from quest_system import (
     claim_quest_reward,
     update_quest_status_only,
     get_quest_progress,
-    create_history_quiz_quests
+    create_history_quiz_quests,
+    check_share_quest_completion
 )
 
 app = FastAPI()
@@ -172,6 +173,13 @@ class PlaceReviewResponse(BaseModel):
     created_at: str
     score_earned: int
 # ▲▲▲ [추가] 장소별 리뷰 조회를 위한 Pydantic 모델 추가 ▲▲▲
+
+# 🔥 [추가] 공유 기록을 위한 Pydantic 모델
+class ShareRecordRequest(BaseModel):
+    user_id: str
+    review_id: str
+    platform: str = "kakao"
+
 
 # --- 이하 API 엔드포인트 ---
 
@@ -597,16 +605,12 @@ async def submit_review(
 ):
     """
     관광지 리뷰를 저장하고 보상 점수를 지급합니다.
-    - 20자 이상, 100자 이하의 리뷰 작성 시 +20점 추가
+    - 20자 이상의 리뷰 작성 시 +20점 추가
     - 이미지 파일 업로드 시 Firebase Storage에 저장
     """
     try:
-        # 리뷰 길이 검증 (20자 이상, 100자 이하)
-        review_text_trimmed = review_text.strip()
-        if len(review_text_trimmed) < 20:
+        if len(review_text.strip()) < 20:
             raise HTTPException(status_code=400, detail="리뷰는 20자 이상 작성해주세요.")
-        if len(review_text_trimmed) > 100:
-            raise HTTPException(status_code=400, detail="리뷰는 100자 이내로 작성해주세요.")
 
         if not db:
             raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
@@ -860,6 +864,72 @@ async def get_user_reviews_for_place(user_id: str, place_name: str):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"리뷰 조회 중 오류 발생: {e}")
 
+# 🔥 [추가] 공유 기록 API 엔드포인트
+@app.post("/shares/record")
+async def record_share(request: ShareRecordRequest):
+    """
+    사용자의 공유 활동을 기록합니다.
+    - review 문서의 share_count를 1 증가시킵니다.
+    - 공유 퀘스트를 완료 상태로 업데이트합니다.
+    """
+    try:
+        if not db:
+            raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
+
+        review_ref = db.collection("reviews").document(request.review_id)
+        
+        # Firestore 트랜잭션을 사용하여 안전하게 카운트 증가
+        @firestore.transactional
+        def update_share_count(transaction, ref):
+            snapshot = ref.get(transaction=transaction)
+            if not snapshot.exists:
+                raise HTTPException(status_code=404, detail="공유하려는 리뷰를 찾을 수 없습니다.")
+            
+            transaction.update(ref, {
+                'share_count': firestore.Increment(1)
+            })
+        
+        transaction = db.transaction()
+        update_share_count(transaction, review_ref)
+
+        # 공유 퀘스트 완료 처리
+        today = datetime.now().strftime('%Y-%m-%d')
+        quests_ref = db.collection("daily_quests")
+        
+        # 오늘의 활성화된 공유 퀘스트 조회
+        active_share_quests = quests_ref.where('user_id', '==', request.user_id).where('date', '==', today).where('type', '==', 'share_image').where('status', '==', 'active').get()
+        
+        completed_quests = []
+        for quest_doc in active_share_quests:
+            quest_data = quest_doc.to_dict()
+            
+            # 공유 퀘스트를 완료 상태로 업데이트
+            quests_ref.document(quest_data['quest_id']).update({
+                'is_completed': True,
+                'status': 'reward_ready',
+                'completed_at': firestore.SERVER_TIMESTAMP
+            })
+            
+            quest_data['is_completed'] = True
+            quest_data['status'] = 'reward_ready'
+            quest_data['completed_at'] = datetime.now()
+            completed_quests.append(quest_data)
+            
+            print(f"🔗 공유 퀘스트 완료! 사용자 {request.user_id}")
+            print(f"   퀘스트: {quest_data['title']}")
+            print(f"   보상: +{quest_data['points']}점")
+            print(f"   ──────────────────────────────")
+
+        print(f"🔗 공유 기록 완료: Review {request.review_id} by User {request.user_id}")
+        print(f"   완료된 공유 퀘스트: {len(completed_quests)}개")
+        return {"message": "공유가 성공적으로 기록되었습니다."}
+
+    except HTTPException:
+        raise # 이미 처리된 HTTP 예외는 다시 발생
+    except Exception as e:
+        print(f"ERROR: 공유 기록 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"공유 기록 중 서버 오류 발생: {e}")
 
 # 서버 시작
 if __name__ == "__main__":
