@@ -46,6 +46,18 @@ class _LoadingPageState extends State<LoadingPage> {
     '청계천',
     '독립문',
     '서울도서관',
+    '노들섬',
+    '낙산공원',
+    '은평한옥마을',
+    '동대문디자인플라자',
+    '창덕궁',
+    '올림픽공원_들꽃마루',
+    '창경궁',
+    '덕수궁',
+    '숭례문',
+    '롯데타워',
+    '봉은사',
+    '서울숲',
   ];
 
   @override
@@ -72,7 +84,7 @@ class _LoadingPageState extends State<LoadingPage> {
       final url = Uri.parse('$baseUrl/gallerySearchList1').replace(
         queryParameters: {
           'serviceKey': serviceKey,
-          'numOfRows': '5000', // 테스트용으로 100개만 로드
+          'numOfRows': '5000',
           'pageNo': '1',
           'MobileOS': 'ETC',
           'MobileApp': 'AppTest',
@@ -237,7 +249,22 @@ class _LoadingPageState extends State<LoadingPage> {
 
       for (final keyword in List.from(keywordsToFind)) {
         for (final photo in seoulPhotos) {
-          if (photo.galTitle.toLowerCase().contains(keyword.toLowerCase())) {
+          final photoTitleLower = photo.galTitle.toLowerCase();
+          bool isMatch = false;
+
+          // [수정] '롯데타워' 검색 로직 확장
+          if (keyword == '롯데타워') {
+            if (photoTitleLower.contains('롯데타워') ||
+                photoTitleLower.contains('롯데월드타워')) {
+              isMatch = true;
+            }
+          } else {
+            if (photoTitleLower.contains(keyword.toLowerCase())) {
+              isMatch = true;
+            }
+          }
+
+          if (isMatch) {
             foundPhotosMap[keyword] = photo;
             keywordsToFind.remove(keyword);
             break;

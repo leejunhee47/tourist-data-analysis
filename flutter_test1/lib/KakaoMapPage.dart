@@ -75,6 +75,18 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     '청계천',
     '독립문',
     '서울도서관',
+    '노들섬',
+    '낙산공원',
+    '은평한옥마을',
+    '동대문디자인플라자',
+    '창덕궁',
+    '올림픽공원_들꽃마루',
+    '창경궁',
+    '덕수궁',
+    '숭례문',
+    '롯데타워',
+    '봉은사',
+    '서울숲',
   ];
 
   @override
@@ -334,12 +346,28 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     for (final photo in _touristSpotPhotos) {
       String? matchedPlace;
       for (final placeName in _placeCoords.keys) {
+        // --- [수정 시작] 롯데월드타워 매칭 로직 보강 ---
+        bool isMatch = false;
+
+        // 1. 기존 매칭 로직 (대부분의 경우)
         if (photo.galTitle.contains(placeName) ||
             photo.galSearchKeyword.contains(placeName) ||
             photo.galPhotographyLocation.contains(placeName)) {
+          isMatch = true;
+        }
+        // 2. 롯데타워/롯데월드타워 예외 처리 (양방향 매칭)
+        // 사진 제목이나 좌표 키 중 하나라도 '롯데타워' 관련 단어이면 서로 매칭되도록 처리
+        else if ((photo.galTitle.contains('롯데타워') ||
+                photo.galTitle.contains('롯데월드타워')) &&
+            (placeName == '롯데타워' || placeName == '롯데월드타워')) {
+          isMatch = true;
+        }
+
+        if (isMatch) {
           matchedPlace = placeName;
           break;
         }
+        // --- [수정 종료] ---
       }
 
       if (matchedPlace != null) {
@@ -349,20 +377,30 @@ class _KakaoMapPageState extends State<KakaoMapPage>
               v['target_place'] == matchedPlace &&
               (v['is_correct'] == true || v['is_correct'] == 1),
         );
-        // ▼▼▼ [수정] 이미지 URL 및 제목 선택 로직 ▼▼▼
-        final String? localImagePath = _localImageUrls[matchedPlace];
+
+        // [수정] 좌표 키와 관계없이 앱 내 표준 키워드(targetKeywords) 기준으로 제목 통일
+        String canonicalPlaceName = matchedPlace;
+        if (targetKeywords.contains('롯데타워') && (matchedPlace == '롯데월드타워')) {
+          canonicalPlaceName = '롯데타워';
+        }
+
+        // 1. 서버에서 가져온 로컬 이미지 목록(_localImageUrls)에 해당 관광지 이름이 있는지 확인합니다.
+        final String? localImagePath = _localImageUrls[canonicalPlaceName];
+
+        // 2. localImagePath가 null이 아니면(로컬 이미지가 있으면) 해당 경로를 사용하고,
+        //    null이면(로컬 이미지가 없으면) 관광사진 API의 이미지(photo.galWebImageUrl)를 사용합니다.
         final String imageUrl = localImagePath != null
             ? '$serverBaseUrl$localImagePath'
             : photo.galWebImageUrl;
-        final String title =
-            localImagePath != null ? matchedPlace : photo.galTitle;
+
+        final String title = canonicalPlaceName; // 표준 키워드로 제목 설정
 
         final jsCode =
             "addPhotoMarker(${coords['lat']}, ${coords['lng']}, '$imageUrl', '${title.replaceAll("'", "\\'")}', '${photo.galContentId}', $isVisited);";
         try {
           await _controller.runJavaScript(jsCode);
         } catch (e) {
-          print("JS 마커 추가 오류 ($matchedPlace): $e");
+          print("JS 마커 추가 오류 ($canonicalPlaceName): $e");
         }
       } else {
         print("'${photo.galTitle}'에 대한 좌표를 찾지 못했습니다.");
@@ -1397,12 +1435,12 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                   }
 
                                   if (matchedPlace != null) {
+                                    finalTitle = matchedPlace;
                                     final String? localImagePath =
                                         _localImageUrls[matchedPlace];
                                     if (localImagePath != null) {
                                       finalImageUrl =
                                           '$serverUrl$localImagePath';
-                                      finalTitle = matchedPlace;
                                     }
                                   }
                                 }
@@ -1677,10 +1715,39 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   }
 
   void _showPhotoDetail(PhotoItem photo) {
-    final matchedPlace = targetKeywords.firstWhere(
-      (p) => photo.galTitle.contains(p),
-      orElse: () => '',
-    );
+    // 더 강력해진 관광지 매칭 로직
+    String matchedPlace = '';
+
+    for (String keyword in targetKeywords) {
+      final title = photo.galTitle;
+      final searchKeyword = photo.galSearchKeyword;
+      final location = photo.galPhotographyLocation;
+
+      bool isMatch = false;
+
+      if (keyword == '롯데타워') {
+        if (title.contains('롯데타워') ||
+            title.contains('롯데월드타워') ||
+            searchKeyword.contains('롯데타워') ||
+            searchKeyword.contains('롯데월드타워') ||
+            location.contains('롯데타워') ||
+            location.contains('롯데월드타워')) {
+          isMatch = true;
+        }
+      } else {
+        if (title.contains(keyword) ||
+            searchKeyword.contains(keyword) ||
+            location.contains(keyword)) {
+          isMatch = true;
+        }
+      }
+
+      if (isMatch) {
+        matchedPlace = keyword;
+        break;
+      }
+    }
+
     final bool isVisited = _visitHistory.any(
       (visit) =>
           visit['target_place'] == matchedPlace &&
@@ -1692,8 +1759,12 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     final String finalImageUrl = localImagePath != null
         ? '$serverUrl$localImagePath'
         : photo.galWebImageUrl;
+
+    // --- [수정 시작] 제목 결정 로직 수정 ---
+    // 미션 관광지인 경우(matchedPlace가 비어있지 않음), 항상 표준 키워드를 제목으로 사용합니다.
     final String finalTitle =
-        localImagePath != null ? matchedPlace : photo.galTitle;
+        matchedPlace.isNotEmpty ? matchedPlace : photo.galTitle;
+    // --- [수정 종료] ---
 
     showDialog(
       context: context,
@@ -1706,7 +1777,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
               shape: const RoundedRectangleBorder(
                   borderRadius:
                       BorderRadius.vertical(top: Radius.circular(12))),
-              title: Text(finalTitle,
+              title: Text(finalTitle, // 수정된 제목(finalTitle) 사용
                   style: const TextStyle(
                       fontSize: 18, fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis),
@@ -1744,7 +1815,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Title: $finalTitle',
+                          Text('Title: $finalTitle', // 수정된 제목(finalTitle) 사용
                               style: const TextStyle(
                                   fontWeight: FontWeight.bold, fontSize: 16)),
                           const SizedBox(height: 8),
