@@ -5,6 +5,8 @@ import random
 import uuid
 from firebase_admin import firestore
 from firebase_config import initialize_firebase, USERS_COLLECTION, DAILY_QUESTS_COLLECTION, VISITS_COLLECTION
+# place_config에서 필요한 데이터와 함수 import
+from place_config import PLACE_COORDINATES, PLACE_MAPPING, calculate_distance_km
 
 # 퀘스트 타입 정의
 class QuestType(Enum):
@@ -22,19 +24,7 @@ class QuestStatus(Enum):
     EXPIRED = "expired"                # 만료됨
     FAILED = "failed"                  # 실패
 
-# 관광지 좌표 정보 (이름: (위도, 경도))
-PLACE_COORDINATES = {
-    '경복궁': (37.5796, 126.9770),
-    '경희궁': (37.5704, 126.9682),
-    '광화문': (37.5725, 126.9768),
-    '남산서울타워': (37.5511, 126.9882),
-    '북촌한옥마을': (37.5825, 126.9849),
-    '청계천': (37.56961, 127.0059),
-    '독립문': (37.5725, 126.9595),
-    '서울도서관': (37.5664, 126.9780)
-}
-
-# 관광지별 역사 퀴즈 데이터
+# 관광지별 역사 퀴즈 데이터 - 새로 추가된 관광지들에 대한 퀴즈 추가
 PLACE_QUIZZES = {
     '경복궁': [
         {
@@ -64,42 +54,36 @@ PLACE_QUIZZES = {
             "explanation": "남산서울타워는 1969년에 완공되어 1970년부터 일반에 공개되었습니다."
         }
     ],
-    '청계천': [
-        {
-            "question": "청계천 복원 사업이 완료된 연도는?",
-            "options": ["2003년", "2005년", "2007년", "2009년"],
-            "correct_answer": 1,
-            "explanation": "청계천 복원 사업은 2003년에 시작되어 2005년에 완료되었습니다."
-        },
-        {
-            "question": "청계천의 총 길이는?",
-            "options": ["5.8km", "6.8km", "7.8km", "8.8km"],
-            "correct_answer": 0,
-            "explanation": "청계천은 총 길이 5.8km의 도심 하천입니다."
-        }
-    ],
-    '광화문': [
-        {
-            "question": "광화문의 '광화'는 무슨 뜻인가요?",
-            "options": ["빛나는 화려함", "넓은 교화", "밝은 변화", "광명한 교화"],
-            "correct_answer": 3,
-            "explanation": "광화문의 '광화'는 '광명한 교화'를 의미합니다."
-        }
-    ],
     '북촌한옥마을': [
         {
-            "question": "북촌한옥마을의 '북촌'은 무슨 뜻인가요?",
-            "options": ["북쪽 마을", "북쪽 언덕", "북쪽 골짜기", "북쪽 산"],
+            "question": "북촌한옥마을의 주요 특징은?",
+            "options": ["전통한옥", "현대건물", "상업지구", "공업지구"],
             "correct_answer": 0,
-            "explanation": "북촌은 '북쪽 마을'을 의미하며, 경복궁 북쪽에 위치한 한옥마을입니다."
+            "explanation": "북촌한옥마을은 조선시대 양반들이 살던 전통 한옥이 보존된 마을입니다."
+        }
+    ],
+    '청계천': [
+        {
+            "question": "청계천 복원 공사가 완료된 연도는?",
+            "options": ["2003년", "2004년", "2005년", "2006년"],
+            "correct_answer": 2,
+            "explanation": "청계천은 2005년에 복원 공사가 완료되어 시민들의 휴식 공간이 되었습니다."
         }
     ],
     '경희궁': [
         {
-            "question": "경희궁은 어떤 왕의 별궁이었나요?",
-            "options": ["인조", "숙종", "영조", "정조"],
-            "correct_answer": 0,
-            "explanation": "경희궁은 조선 인조의 별궁으로 건립되었습니다."
+            "question": "경희궁이 창건된 연도는?",
+            "options": ["1617년", "1618년", "1619년", "1620년"],
+            "correct_answer": 1,
+            "explanation": "경희궁은 1618년 광해군에 의해 창건된 조선왕조의 궁궐입니다."
+        }
+    ],
+    '광화문': [
+        {
+            "question": "광화문이 현재 위치로 이전된 연도는?",
+            "options": ["2006년", "2007년", "2008년", "2009년"],
+            "correct_answer": 2,
+            "explanation": "광화문은 2008년에 현재 위치로 이전되어 복원되었습니다."
         }
     ],
     '독립문': [
@@ -117,28 +101,137 @@ PLACE_QUIZZES = {
             "correct_answer": 1,
             "explanation": "서울도서관은 2009년에 개관한 서울시립 도서관입니다."
         }
+    ],
+    # 새로 추가된 관광지들의 퀴즈
+    '덕수궁': [
+        {
+            "question": "덕수궁이 조선의 정궁이 된 시기는?",
+            "options": ["1592년", "1593년", "1594년", "1595년"],
+            "correct_answer": 1,
+            "explanation": "덕수궁은 임진왜란으로 경복궁이 불타자 1593년부터 조선의 정궁 역할을 했습니다."
+        }
+    ],
+    '롯데타워': [
+        {
+            "question": "롯데월드타워의 높이는?",
+            "options": ["555m", "555.7m", "556m", "556.7m"],
+            "correct_answer": 1,
+            "explanation": "롯데월드타워는 높이 555.7m로 한국에서 가장 높은 건물입니다."
+        }
+    ],
+    '봉은사': [
+        {
+            "question": "봉은사가 창건된 연도는?",
+            "options": ["794년", "795년", "796년", "797년"],
+            "correct_answer": 0,
+            "explanation": "봉은사는 794년에 창건된 한국의 대표적인 불교 사찰입니다."
+        }
+    ],
+    '서울숲': [
+        {
+            "question": "서울숲이 개원한 연도는?",
+            "options": ["2004년", "2005년", "2006년", "2007년"],
+            "correct_answer": 1,
+            "explanation": "서울숲은 2005년에 개원한 서울의 대표적인 도시 공원입니다."
+        }
+    ],
+    '숭례문': [
+        {
+            "question": "숭례문이 건립된 연도는?",
+            "options": ["1396년", "1397년", "1398년", "1399년"],
+            "correct_answer": 2,
+            "explanation": "숭례문은 1398년에 건립된 조선왕조의 도성문입니다."
+        }
+    ],
+    '창경궁': [
+        {
+            "question": "창경궁이 창건된 연도는?",
+            "options": ["1418년", "1419년", "1420년", "1421년"],
+            "correct_answer": 1,
+            "explanation": "창경궁은 1419년 세종대왕이 창건한 조선왕조의 궁궐입니다."
+        }
+    ],
+    '낙산공원': [
+        {
+            "question": "낙산공원의 주요 특징은?",
+            "options": ["한양도성", "서울타워", "남산공원", "북한산"],
+            "correct_answer": 0,
+            "explanation": "낙산공원은 한양도성이 지나가는 역사적인 공원입니다."
+        }
+    ],
+    '노들섬': [
+        {
+            "question": "노들섬이 위치한 강은?",
+            "options": ["한강", "청계천", "양재천", "안양천"],
+            "correct_answer": 0,
+            "explanation": "노들섬은 한강에 위치한 자연 섬입니다."
+        }
+    ],
+    '동대문디자인플라자': [
+        {
+            "question": "동대문디자인플라자가 개관한 연도는?",
+            "options": ["2013년", "2014년", "2015년", "2016년"],
+            "correct_answer": 1,
+            "explanation": "동대문디자인플라자는 2014년에 개관한 디자인 복합 문화공간입니다."
+        }
+    ],
+    '올림픽공원': [
+        {
+            "question": "올림픽공원이 조성된 연도는?",
+            "options": ["1986년", "1987년", "1988년", "1989년"],
+            "correct_answer": 2,
+            "explanation": "올림픽공원은 1988년 서울올림픽을 위해 조성된 공원입니다."
+        }
+    ],
+    '은평한옥마을': [
+        {
+            "question": "은평한옥마을의 주요 특징은?",
+            "options": ["전통한옥", "현대건물", "상업지구", "공업지구"],
+            "correct_answer": 0,
+            "explanation": "은평한옥마을은 전통 한옥이 보존된 마을입니다."
+        }
+    ],
+    '창덕궁': [
+        {
+            "question": "창덕궁이 유네스코 세계문화유산으로 등재된 연도는?",
+            "options": ["1995년", "1996년", "1997년", "1998년"],
+            "correct_answer": 2,
+            "explanation": "창덕궁은 1997년 유네스코 세계문화유산으로 등재되었습니다."
+        }
     ]
 }
 
-# 관광지 테마 분류 (각 테마당 3개 관광지, 겹치지 않도록 설정)
+# 관광지 테마 분류 - 20개 관광지를 5개 테마로 재분류
 PLACE_THEMES = {
     '궁궐_역사': {
         'name': '궁궐과 역사',
         'description': '조선왕조의 궁궐과 역사적 건축물을 탐방하세요',
-        'places': ['경복궁', '경희궁', '광화문'],
+        'places': ['경복궁', '경희궁', '창덕궁', '창경궁', '덕수궁'],
         'color': '#8B4513'  # 갈색
     },
     '자연_공원': {
         'name': '자연과 공원',
         'description': '자연 속에서 휴식을 취할 수 있는 공원과 하천을 방문하세요',
-        'places': ['청계천', '남산서울타워'],
+        'places': ['청계천', '서울숲', '낙산공원', '올림픽공원', '노들섬'],
         'color': '#228B22'  # 녹색
     },
     '전통_문화': {
         'name': '전통과 문화',
         'description': '한국의 문화와 전통을 체험할 수 있는 장소를 탐방하세요',
-        'places': ['북촌한옥마을', '서울도서관', '독립문'],
+        'places': ['북촌한옥마을', '은평한옥마을', '봉은사', '숭례문', '광화문'],
         'color': '#FFD700'  # 금색
+    },
+    '현대_도시': {
+        'name': '현대와 도시',
+        'description': '현대 서울의 상징적인 건물과 시설을 체험하세요',
+        'places': ['남산서울타워', '롯데타워', '동대문디자인플라자', '서울도서관'],
+        'color': '#4169E1'  # 파란색
+    },
+    '역사_기념': {
+        'name': '역사와 기념',
+        'description': '역사적 의미가 깊은 기념물과 장소를 탐방하세요',
+        'places': ['독립문'],
+        'color': '#DC143C'  # 빨간색
     }
 }
 
@@ -402,30 +495,9 @@ def generate_daily_quests(user_id: str) -> List[Dict[str, Any]]:
         print(f"✅ Firebase 연결 성공 - 사용자: {user_id}")
         today = datetime.now().strftime('%Y-%m-%d')
         quests_ref = db.collection(DAILY_QUESTS_COLLECTION)
-        # 이미 오늘의 퀘스트가 있으면 자정 체크 후 반환
+        # 이미 오늘의 퀘스트가 있으면 반환
         existing_quests = quests_ref.where('user_id', '==', user_id).where('date', '==', today).get()
         if existing_quests:
-            # 첫 번째 퀘스트의 생성 시간으로 자정 체크
-            first_quest = existing_quests[0].to_dict()
-            created_at = first_quest.get('created_at')
-            
-            # SERVER_TIMESTAMP인 경우 현재 시간으로 변환
-            if created_at == firestore.SERVER_TIMESTAMP:
-                created_at = datetime.now()
-            
-            # 자정이 지났는지 확인 (생성 날짜와 오늘 날짜 비교)
-            if isinstance(created_at, datetime):
-                created_date = created_at.strftime('%Y-%m-%d')
-                if created_date != today:
-                    # 자정이 지났으면 기존 퀘스트 삭제 후 새로 생성
-                    print("🕛 자정이 지나서 퀘스트 초기화 중...")
-                    for quest_doc in existing_quests:
-                        quest_doc.reference.delete()
-                    print("🗑️ 기존 퀘스트 삭제 완료")
-                    # 재귀 호출로 새 퀘스트 생성
-                    return generate_daily_quests(user_id)
-            
-            # 자정이 지나지 않았거나 기존 퀘스트가 유효하면 반환
             quests = []
             for quest_doc in existing_quests:
                 quest_data = quest_doc.to_dict()
@@ -814,4 +886,3 @@ def get_quest_progress(user_id: str) -> Dict[str, Any]:
         "available_reward": available_reward,
         "progress_percentage": (reward_ready_quests + claimed_quests) / total_quests * 100 if total_quests > 0 else 0
     }
-
