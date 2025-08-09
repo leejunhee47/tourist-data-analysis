@@ -346,6 +346,44 @@
         }
       }
 
+      // =================================================================
+      // ▼▼▼ [추가] 지도 줌 레벨에 따라 마커 크기를 조절하는 함수 ▼▼▼
+      // =================================================================
+      function updateAllMarkerSizes() {
+        if (!map) return; // 맵이 로드되지 않았으면 실행하지 않음
+
+        const level = map.getLevel(); // 현재 지도 레벨을 가져옵니다.
+        let size; // 마커의 크기를 담을 변수
+        let display = "block"; // 마커를 보여줄지 여부 ('block' 또는 'none')
+
+        // 지도 레벨(줌)에 따라 마커 크기를 다르게 설정합니다.
+        // 숫자가 클수록 축소된 상태입니다.
+        if (level > 9) {
+          // 너무 축소된 경우 마커를 숨깁니다.
+          display = "none";
+          size = 0;
+        } else if (level > 7) {
+          // 중간 레벨
+          size = 35;
+        } else if (level > 5) {
+          // 확대된 레벨
+          size = 45;
+        } else {
+          // 가장 확대된 레벨
+          size = 55;
+        }
+
+        // 'photo-overlay' 클래스를 가진 모든 마커 요소를 가져옵니다.
+        const overlays = document.getElementsByClassName("photo-overlay");
+        for (let i = 0; i < overlays.length; i++) {
+          // 각 마커의 스타일을 새로 계산된 값으로 변경합니다.
+          overlays[i].style.width = size + "px";
+          overlays[i].style.height = size + "px";
+          overlays[i].style.display = display;
+        }
+      }
+      // =================================================================
+
       /**
        * 서울시 경계 폴리곤을 지도에 표시하는 함수
        */
@@ -377,6 +415,14 @@
             maxLevel: 12,
           };
           map = new kakao.maps.Map(container, options);
+
+          // ▼▼▼ [추가] zoom_changed 이벤트 리스너 등록 ▼▼▼
+          kakao.maps.event.addListener(
+            map,
+            "zoom_changed",
+            updateAllMarkerSizes
+          );
+          // ▲▲▲ [추가] 여기까지 ▲▲▲
 
           // 서울시 경계 폴리곤 표시 함수 호출
           displaySeoulArea(map, seoulCoordinates);
@@ -448,15 +494,29 @@
           const filterStyle = isVisited ? "" : "filter: grayscale(100%);";
           const initialBorderColor = isVisited ? "#2b92ec" : "#fff";
 
+          // ▼▼▼ [수정] 마커 사이즈를 동적으로 결정하는 로직 추가 ▼▼▼
+          const level = map.getLevel();
+          let size;
+          if (level > 9) {
+            size = 0;
+          } else if (level > 7) {
+            size = 35;
+          } else if (level > 5) {
+            size = 45;
+          } else {
+            size = 55;
+          }
+
           const content = `
             <div id="photo-overlay-${contentId}" class="photo-overlay" 
                  data-visited="${isVisited}"
-                 style="width:50px; height:50px; border-radius:50%; border:3px solid ${initialBorderColor}; box-shadow:0 2px 6px rgba(0,0,0,0.4); cursor:pointer; transition:all 0.2s ease; overflow:hidden; -webkit-tap-highlight-color:transparent; touch-action:manipulation;"
+                 style="width:${size}px; height:${size}px; border-radius:50%; border:3px solid ${initialBorderColor}; box-shadow:0 2px 6px rgba(0,0,0,0.4); cursor:pointer; transition:all 0.2s ease; overflow:hidden; -webkit-tap-highlight-color:transparent; touch-action:manipulation;"
                  onclick="handlePhotoClick('${contentId}', '${title}', ${lat}, ${lng});"
                  ontouchstart="this.style.transform='scale(0.95)'"
                  ontouchend="this.style.transform='scale(1)'">
               <div class="photo-image-inner" style="width:100%; height:100%; background-image:url('${imageUrl}'); background-size:cover; background-position:center; ${filterStyle} transition:filter 0.5s ease; pointer-events:none;"></div>
             </div>`;
+          // ▲▲▲ [수정] 여기까지 ▲▲▲
 
           const photoOverlay = new kakao.maps.CustomOverlay({
             position: markerPosition,
@@ -466,6 +526,9 @@
           });
           photoOverlay.setMap(map);
           allOverlays.push(photoOverlay);
+
+          // ▼▼▼ [추가] 마커 추가 후 즉시 크기 업데이트 호출 ▼▼▼
+          updateAllMarkerSizes();
         } catch (error) {
           console.error("관광지 오버레이 추가 오류:", error);
         }
