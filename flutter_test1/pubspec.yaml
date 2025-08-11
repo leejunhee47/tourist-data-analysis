@@ -44,10 +44,12 @@ dependencies:
   image_picker: ^1.1.2
   permission_handler: ^11.0.1
   kakao_flutter_sdk_user: ^1.9.7+3
+  kakao_flutter_sdk_share: ^1.9.1+2
   shared_preferences: ^2.0.15
   uuid: ^4.3.0
-  google_fonts: ^6.2.1
-  # 웹 호환성을 위한 패키지 추가
+  google_fonts: ^6.2.1 # 최신 버전은 다를 수 있습니다.
+  url_launcher: ^6.1.14
+
   flutter_web_plugins:
     sdk: flutter
   js: ^0.6.4
