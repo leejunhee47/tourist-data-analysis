@@ -4,36 +4,50 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
+import 'dart:typed_data';
+import 'package:image/image.dart' as img;
 
 import 'KakaoMapPage.dart';
 import 'PhotoItem.dart';
 import 'game_data_model.dart';
 import 'quest_model.dart';
+import 'login_page.dart';
+import 'config.dart';
 
 class LoadingPage extends StatefulWidget {
   final User? user;
   final bool isGuest;
+  // --- [추가] Admin 정보를 위한 필드 ---
+  final String? adminUserId;
+  final String? adminUsername;
 
-  const LoadingPage({super.key, this.user, this.isGuest = false})
-      : assert(
-            user != null || isGuest, 'User must be provided if not a guest.');
+  const LoadingPage({super.key, this.user})
+      : isGuest = false,
+        adminUserId = null,
+        adminUsername = null;
 
   const LoadingPage.guest({super.key})
       : user = null,
-        isGuest = true;
+        isGuest = true,
+        adminUserId = null,
+        adminUsername = null;
+
+  // --- [추가] Admin을 위한 생성자 ---
+  const LoadingPage.admin({
+    super.key,
+    required this.adminUserId,
+    required this.adminUsername,
+  })  : user = null,
+        isGuest = false;
 
   @override
   State<LoadingPage> createState() => _LoadingPageState();
 }
 
 class _LoadingPageState extends State<LoadingPage> {
-  // --- 진행 상태를 위한 변수 추가 ---
   double _progress = 0.0;
   String _loadingMessage = '여행 준비를 시작합니다...';
 
-  // --- Constants ---
-  final String serverUrl =
-      'https://tourist-app-783243215272.asia-northeast3.run.app';
   final String baseUrl = 'https://apis.data.go.kr/B551011/PhotoGalleryService1';
   final String serviceKey =
       'AzjIKOxRyY9dTdGHXgvr0WkT9dlnEnpSdLz5+UHvMIm/PhztPInz9ePGb5FS+sHdAVH3GEfFqHEh/oW54s1A1A==';
@@ -68,7 +82,6 @@ class _LoadingPageState extends State<LoadingPage> {
     });
   }
 
-  // 진행률과 메시지를 업데이트하는 헬퍼 함수
   void _updateProgress(double value, String message) {
     if (mounted) {
       setState(() {
@@ -78,9 +91,187 @@ class _LoadingPageState extends State<LoadingPage> {
     }
   }
 
+  Future<List<PhotoItem>> _processImages(List<PhotoItem> photos) async {
+    List<PhotoItem> processedPhotos = [];
+    // 이미지 처리는 CPU를 많이 사용하므로 동시 처리를 제한하여 앱의 반응성을 유지
+    int concurrentJobs = 5;
+    List<Future<PhotoItem>> futures = [];
+
+    for (int i = 0; i < photos.length; i++) {
+      final photo = photos[i];
+      futures.add(_resizeAndEncode(photo));
+
+      // 5개씩 묶어서 처리하거나 마지막 아이템일 경우
+      if (futures.length == concurrentJobs || i == photos.length - 1) {
+        final results = await Future.wait(futures);
+        processedPhotos.addAll(results);
+        futures.clear(); // 다음 배치를 위해 리스트 비우기
+
+        // 진행 상황 업데이트
+        _updateProgress(0.5 + (0.2 * (processedPhotos.length / photos.length)),
+            '관광지 이미지 최적화 중... (${processedPhotos.length}/${photos.length})');
+      }
+    }
+    return processedPhotos;
+  }
+
+  // [추가] 개별 이미지 리사이징 및 Base64 인코딩 함수
+  Future<PhotoItem> _resizeAndEncode(PhotoItem photo) async {
+    try {
+      final response = await http.get(Uri.parse(photo.galWebImageUrl));
+      if (response.statusCode == 200) {
+        // 이미지 디코딩
+        img.Image? originalImage = img.decodeImage(response.bodyBytes);
+        if (originalImage != null) {
+          // 이미지 리사이징 (너비 200px, 높이는 비율에 맞게 자동 조절)
+          img.Image resizedImage = img.copyResize(originalImage, width: 200);
+          // JPEG 형식으로 인코딩
+          Uint8List jpgBytes =
+              Uint8List.fromList(img.encodeJpg(resizedImage, quality: 85));
+          // Base64 문자열로 변환
+          String base64String = base64Encode(jpgBytes);
+          // 데이터 URI 형식으로 완성 후 PhotoItem에 저장
+          return photo.copyWith(
+              base64Thumbnail: 'data:image/jpeg;base64,$base64String');
+        }
+      }
+    } catch (e) {
+      print('이미지 처리 오류 (${photo.galTitle}): $e');
+    }
+    // 실패 시 원본 PhotoItem 반환
+    return photo;
+  }
+
+  // --- [수정] _getOrCreateUser 함수: 로그인 방식에 따라 다른 API 호출 ---
+  Future<Map<String, String>?> _getOrCreateUser() async {
+    try {
+      if (widget.isGuest) {
+        // 게스트 로그인 API 호출
+        final response = await http.post(
+          Uri.parse('$serverUrl/guest_login/'),
+        );
+        if (response.statusCode == 200) {
+          final data = json.decode(utf8.decode(response.bodyBytes));
+          return {'user_id': data['user_id'], 'username': data['username']};
+        }
+      } else if (widget.user != null) {
+        // 카카오 로그인 (기존 로직)
+        final String? username = widget.user?.kakaoAccount?.profile?.nickname;
+        final String? profileImageUrl =
+            widget.user?.kakaoAccount?.profile?.thumbnailImageUrl;
+
+        if (username == null) return null;
+
+        final response = await http.post(
+          Uri.parse('$serverUrl/create_user/'),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({
+            'username': username,
+            'profile_image_url': profileImageUrl ?? ''
+          }),
+        );
+        if (response.statusCode == 200) {
+          final data = json.decode(utf8.decode(response.bodyBytes));
+          // API 응답에서 username을 받아올 수 있지만, 카카오 닉네임을 그대로 사용
+          return {'user_id': data['user_id'], 'username': username};
+        }
+      }
+    } catch (e) {
+      print('User creation/retrieval error: $e');
+    }
+    return null;
+  }
+
+  // --- [수정] _loadAllGameData 함수: 3가지 로그인 방식 처리 ---
+  Future<void> _loadAllGameData() async {
+    try {
+      _updateProgress(0.1, '사용자 정보 확인 중...');
+      String? userId;
+      String? username;
+      // admin, guest, kakao 로그인 여부를 확인하여 userId와 username 설정
+      if (widget.adminUserId != null) {
+        // 1. Admin 로그인
+        userId = widget.adminUserId;
+        username = widget.adminUsername;
+      } else {
+        // 2. Kakao 또는 Guest 로그인
+        final userInfo = await _getOrCreateUser();
+        if (userInfo == null) throw Exception("사용자 정보를 가져올 수 없습니다.");
+        userId = userInfo['user_id'];
+        username = userInfo['username'];
+      }
+
+      if (userId == null || username == null) {
+        throw Exception("유효한 사용자 정보가 없습니다.");
+      }
+
+      _updateProgress(0.25, '내 정보 불러오는 중...');
+      final userProfile = await _fetchUserProfile(userId);
+
+      _updateProgress(0.5, '관광지 사진 로딩 중...');
+      final photoData = await _fetchTouristSpotPhotos();
+
+      List<PhotoItem> originalPhotos = photoData['touristSpotPhotos']!;
+      List<PhotoItem> processedPhotos = await _processImages(originalPhotos);
+      photoData['touristSpotPhotos'] = processedPhotos;
+
+      final keywordPhotos = await _fetchKeywordSearchPhotos('서울');
+
+      _updateProgress(0.7, '장소 및 랭킹 정보 확인 중...');
+      final placeCoords = await _fetchPlaceCoordinates();
+      final rankings = await _fetchRankings();
+
+      _updateProgress(0.85, '오늘의 퀘스트 확인 중...');
+      final questData = await _fetchQuestsAndProgress(userId);
+
+      _updateProgress(0.95, '여행 세션을 시작합니다...');
+      final sessionId = await _startGameSession(userId);
+
+      _updateProgress(1.0, '로딩 완료');
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      final gameData = GameData(
+        userId: userId,
+        username: username, // [추가] username 전달
+        sessionId: sessionId,
+        currentUser: widget.user,
+        isGuest: widget.isGuest,
+        isAdmin: widget.adminUserId != null,
+        totalScore: userProfile['total_score'],
+        visitHistory: userProfile['visit_history'],
+        touristSpotPhotos: photoData['touristSpotPhotos']!,
+        allSeoulPhotos: photoData['allSeoulPhotos']!,
+        keywordSearchedPhotos: keywordPhotos,
+        placeCoords: placeCoords,
+        rankings: rankings,
+        quests: questData['quests'],
+        questProgress: questData['questProgress'],
+      );
+
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => KakaoMapPage(gameData: gameData),
+          ),
+        );
+      }
+    } catch (e) {
+      print("데이터 로딩 중 심각한 오류 발생: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('데이터를 불러오는데 실패했습니다: $e')),
+        );
+        // [추가] 오류 발생 시 로그인 페이지로 복귀
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const LoginPage()),
+        );
+      }
+    }
+  }
+
+  // (이하 다른 함수들은 이전과 거의 동일)
   Future<List<PhotoItem>> _fetchKeywordSearchPhotos(String keyword) async {
     try {
-      // 'gallerySearchList1' 엔드포인트 사용
       final url = Uri.parse('$baseUrl/gallerySearchList1').replace(
         queryParameters: {
           'serviceKey': serviceKey,
@@ -88,8 +279,8 @@ class _LoadingPageState extends State<LoadingPage> {
           'pageNo': '1',
           'MobileOS': 'ETC',
           'MobileApp': 'AppTest',
-          'arrange': 'A', // 정렬: A=촬영일, B=제목, C=수정일
-          'keyword': keyword, // 검색할 키워드
+          'arrange': 'A',
+          'keyword': keyword,
           '_type': 'json',
         },
       );
@@ -105,102 +296,6 @@ class _LoadingPageState extends State<LoadingPage> {
       print('키워드 검색 사진 로드 오류: $e');
     }
     return [];
-  }
-
-  // 데이터를 순차적으로 불러오며 진행률을 업데이트하도록 수정
-  Future<void> _loadAllGameData() async {
-    try {
-      // 1. 사용자 정보 가져오기 또는 생성하기
-      _updateProgress(0.1, '사용자 정보 확인 중...');
-      final userId = await _getOrCreateUser();
-      if (userId == null) throw Exception("사용자 ID를 가져올 수 없습니다.");
-
-      // 2. 사용자 프로필 정보 가져오기
-      _updateProgress(0.25, '내 정보 불러오는 중...');
-      final userProfile = await _fetchUserProfile(userId);
-
-      // 3. 관광지 사진 정보 가져오기
-      _updateProgress(0.5, '관광지 사진 로딩 중...');
-      final photoData = await _fetchTouristSpotPhotos();
-      // [추가] '서울'을 키워드로 테스트용 사진 데이터 호출
-      final keywordPhotos = await _fetchKeywordSearchPhotos('서울');
-
-      // 4. 장소 좌표 및 랭킹 정보 가져오기
-      _updateProgress(0.7, '장소 및 랭킹 정보 확인 중...');
-      final placeCoords = await _fetchPlaceCoordinates();
-      final rankings = await _fetchRankings();
-
-      // 5. 퀘스트 정보 가져오기
-      _updateProgress(0.85, '오늘의 퀘스트 확인 중...');
-      final questData = await _fetchQuestsAndProgress(userId);
-
-      // 6. 게임 세션 시작
-      _updateProgress(0.95, '여행 세션을 시작합니다...');
-      final sessionId = await _startGameSession(userId);
-
-      _updateProgress(1.0, '로딩 완료');
-      await Future.delayed(
-          const Duration(milliseconds: 500)); // 완료 메시지를 잠시 보여주기 위함
-
-      // GameData 객체 생성
-      // [수정] GameData 객체 생성 시, 테스트용 사진 목록을 전달
-      final gameData = GameData(
-        userId: userId,
-        sessionId: sessionId,
-        currentUser: widget.user,
-        isGuest: widget.isGuest,
-        totalScore: userProfile['total_score'],
-        visitHistory: userProfile['visit_history'],
-        touristSpotPhotos: photoData['touristSpotPhotos']!,
-        allSeoulPhotos: photoData['allSeoulPhotos']!,
-        keywordSearchedPhotos: keywordPhotos, // [수정] 추가된 목록 전달
-        placeCoords: placeCoords,
-        rankings: rankings,
-        quests: questData['quests'],
-        questProgress: questData['questProgress'],
-      );
-
-      // 데이터 로딩이 완료되면 지도 페이지로 이동합니다.
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => KakaoMapPage(gameData: gameData),
-          ),
-        );
-      }
-    } catch (e) {
-      print("데이터 로딩 중 심각한 오류 발생: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('데이터를 불러오는데 실패했습니다: $e')),
-        );
-      }
-    }
-  }
-
-  // (이하 데이터 로딩 함수들은 이전과 동일)
-  Future<String?> _getOrCreateUser() async {
-    final String? username =
-        widget.isGuest ? "게스트유저" : widget.user?.kakaoAccount?.profile?.nickname;
-    final String? profileImageUrl = widget.isGuest
-        ? ""
-        : widget.user?.kakaoAccount?.profile?.thumbnailImageUrl;
-
-    if (username == null) return null;
-    try {
-      final response = await http.post(
-        Uri.parse('$serverUrl/create_user/'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode(
-            {'username': username, 'profile_image_url': profileImageUrl ?? ''}),
-      );
-      if (response.statusCode == 200) {
-        return json.decode(utf8.decode(response.bodyBytes))['user_id'];
-      }
-    } catch (e) {
-      print('User creation/retrieval error: $e');
-    }
-    return null;
   }
 
   Future<Map<String, dynamic>> _fetchUserProfile(String userId) async {
@@ -219,6 +314,20 @@ class _LoadingPageState extends State<LoadingPage> {
   Future<Map<String, List<PhotoItem>>> _fetchTouristSpotPhotos() async {
     final List<PhotoItem> touristSpotPhotos = [];
     final List<PhotoItem> allSeoulPhotos = [];
+
+    // 서버에서 로컬 이미지 URL 맵 가져오기
+    Map<String, String> localImageUrls = {};
+    try {
+      final response =
+          await http.get(Uri.parse('$serverUrl/places/local-images'));
+      if (response.statusCode == 200) {
+        localImageUrls = Map<String, String>.from(
+            json.decode(utf8.decode(response.bodyBytes)));
+      }
+    } catch (e) {
+      print('Error fetching local image URLs: $e');
+    }
+
     try {
       final url = Uri.parse('$baseUrl/galleryList1').replace(
         queryParameters: {
@@ -251,8 +360,6 @@ class _LoadingPageState extends State<LoadingPage> {
         for (final photo in seoulPhotos) {
           final photoTitleLower = photo.galTitle.toLowerCase();
           bool isMatch = false;
-
-          // [수정] '롯데타워' 검색 로직 확장
           if (keyword == '롯데타워') {
             if (photoTitleLower.contains('롯데타워') ||
                 photoTitleLower.contains('롯데월드타워')) {
@@ -263,7 +370,6 @@ class _LoadingPageState extends State<LoadingPage> {
               isMatch = true;
             }
           }
-
           if (isMatch) {
             foundPhotosMap[keyword] = photo;
             keywordsToFind.remove(keyword);
@@ -276,7 +382,7 @@ class _LoadingPageState extends State<LoadingPage> {
         foundPhotosMap[keyword] = PhotoItem(
           galContentId: keyword,
           galTitle: keyword,
-          galWebImageUrl: '$serverUrl/map_images/$keyword.jpg',
+          galWebImageUrl: '$serverUrl/map_images/$keyword.jpg', // 기본 URL 설정
           galCreatedtime: '',
           galModifiedtime: '',
           galPhotographyMonth: '',
@@ -288,7 +394,17 @@ class _LoadingPageState extends State<LoadingPage> {
 
       for (var keyword in targetKeywords) {
         if (foundPhotosMap.containsKey(keyword)) {
-          touristSpotPhotos.add(foundPhotosMap[keyword]!);
+          PhotoItem photoToAdd = foundPhotosMap[keyword]!;
+
+          // 'map_images' 폴더에 해당 관광지 이미지가 있으면 API URL을 덮어쓰기
+          if (localImageUrls.containsKey(keyword)) {
+            final localPath = localImageUrls[keyword]!;
+            final finalImageUrl = '$serverUrl$localPath';
+
+            // 기존 PhotoItem 객체를 복사하여 galWebImageUrl만 변경
+            photoToAdd = photoToAdd.copyWith(galWebImageUrl: finalImageUrl);
+          }
+          touristSpotPhotos.add(photoToAdd);
         }
       }
     } catch (e) {
@@ -393,11 +509,9 @@ class _LoadingPageState extends State<LoadingPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // --- 게이지 UI (수정된 부분) ---
               TweenAnimationBuilder<double>(
                 tween: Tween(end: _progress),
-                duration:
-                    const Duration(milliseconds: 400), // 부드러운 전환을 위한 애니메이션 시간
+                duration: const Duration(milliseconds: 400),
                 builder: (context, value, child) {
                   return Stack(
                     alignment: Alignment.center,
@@ -406,16 +520,16 @@ class _LoadingPageState extends State<LoadingPage> {
                         width: 120,
                         height: 120,
                         child: CircularProgressIndicator(
-                          value: value, // 애니메이션이 적용된 값 사용
+                          value: value,
                           strokeWidth: 10,
                           backgroundColor: Colors.white.withOpacity(0.3),
                           valueColor:
                               const AlwaysStoppedAnimation<Color>(Colors.white),
-                          strokeCap: StrokeCap.round, // 게이지 끝을 둥글게 처리
+                          strokeCap: StrokeCap.round,
                         ),
                       ),
                       Text(
-                        '${(value * 100).toInt()}%', // 애니메이션이 적용된 값 사용
+                        '${(value * 100).toInt()}%',
                         style: const TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.bold,
@@ -433,7 +547,6 @@ class _LoadingPageState extends State<LoadingPage> {
                 },
               ),
               const SizedBox(height: 32),
-              // --- 진행 메시지 ---
               Text(
                 _loadingMessage,
                 style: const TextStyle(

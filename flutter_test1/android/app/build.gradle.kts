@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.flutter_test1"
+    namespace = "com.twopick.picandtrip"
     compileSdk = flutter.compileSdkVersion
     // NDK 버전 설정을 주석 처리
     // ndkVersion = "27.0.12077973"
@@ -24,7 +24,7 @@ android {
     // 릴리즈 키 서명 설정 추가
     // build.gradle.kts (비밀번호 없음)
     val keystoreProperties = Properties()
-    val keystorePropertiesFile = rootProject.file("key.properties")
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
     if (keystorePropertiesFile.exists()) {
         keystoreProperties.load(FileInputStream(keystorePropertiesFile))
     }
@@ -40,7 +40,7 @@ android {
     }
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.flutter_test1"
+        applicationId = "com.twopick.picandtrip"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

@@ -33,6 +33,7 @@ dependencies:
   xml: ^6.3.0
   http: ^1.1.0
   intl: ^0.18.1
+  path: ^1.9.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -49,6 +50,8 @@ dependencies:
   uuid: ^4.3.0
   google_fonts: ^6.2.1 # 최신 버전은 다를 수 있습니다.
   url_launcher: ^6.1.14
+  flutter_launcher_icons: ^0.13.1
+  image: ^4.1.0
 
   flutter_web_plugins:
     sdk: flutter
@@ -67,6 +70,10 @@ dev_dependencies:
   flutter_lints: ^2.0.3
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  image_path_android: "assets/아이콘.png"
 
 # The following section is specific to Flutter packages.
 flutter:
