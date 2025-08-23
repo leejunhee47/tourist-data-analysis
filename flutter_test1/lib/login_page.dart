@@ -16,7 +16,7 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -24,6 +24,32 @@ class _LoginPageState extends State<LoginPage> {
       TextEditingController();
   final TextEditingController _adminPasswordController =
       TextEditingController();
+
+  // --- [추가] 애니메이션 컨트롤러 ---
+  late AnimationController _dialogAnimationController;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _dialogAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _scaleAnimation = CurvedAnimation(
+      parent: _dialogAnimationController,
+      curve: Curves.easeOutBack,
+    );
+  }
+
+  @override
+  void dispose() {
+    _dialogAnimationController.dispose();
+    _adminUsernameController.dispose();
+    _adminPasswordController.dispose();
+    super.dispose();
+  }
+  // --- [추가 종료] ---
 
   Future<bool> _checkConnectivity() async {
     try {
@@ -129,7 +155,9 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  // --- [수정] 어드민 로그인 다이얼로그 UI 개선 ---
   void _showAdminLoginDialog() {
+    _dialogAnimationController.forward(from: 0.0);
     showDialog(
       context: context,
       builder: (context) {
@@ -138,91 +166,154 @@ class _LoginPageState extends State<LoginPage> {
 
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('어드민 로그인'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: _adminUsernameController,
-                    decoration: const InputDecoration(labelText: 'Username'),
-                  ),
-                  TextField(
-                    controller: _adminPasswordController,
-                    decoration: const InputDecoration(labelText: 'Password'),
-                    obscureText: true,
-                  ),
-                  if (adminError != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8.0),
-                      child: Text(adminError!,
-                          style: const TextStyle(color: Colors.red)),
-                    ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('취소'),
+            return ScaleTransition(
+              scale: _scaleAnimation,
+              child: AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                ElevatedButton(
-                  onPressed: isAdminLoading
-                      ? null
-                      : () async {
-                          setDialogState(() {
-                            isAdminLoading = true;
-                            adminError = null;
-                          });
+                backgroundColor: Colors.white,
+                surfaceTintColor: Colors.white,
+                titlePadding: EdgeInsets.zero,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                title: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).primaryColor,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(20),
+                      topRight: Radius.circular(20),
+                    ),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.admin_panel_settings, color: Colors.white),
+                      SizedBox(width: 12),
+                      Text(
+                        '어드민 로그인',
+                        style: TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _adminUsernameController,
+                      decoration: InputDecoration(
+                        labelText: 'Username',
+                        prefixIcon: const Icon(Icons.person_outline),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _adminPasswordController,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      obscureText: true,
+                    ),
+                    if (adminError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12.0),
+                        child: Text(
+                          adminError!,
+                          style: const TextStyle(
+                              color: Colors.redAccent, fontSize: 14),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('취소'),
+                  ),
+                  ElevatedButton.icon(
+                    icon: isAdminLoading
+                        ? const SizedBox.shrink()
+                        : const Icon(Icons.login),
+                    label: isAdminLoading
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('로그인'),
+                    onPressed: isAdminLoading
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              isAdminLoading = true;
+                              adminError = null;
+                            });
 
-                          try {
-                            final response = await http.post(
-                              Uri.parse('$serverUrl/admin_login/'),
-                              headers: {'Content-Type': 'application/json'},
-                              body: json.encode({
-                                'username': _adminUsernameController.text,
-                                'password': _adminPasswordController.text,
-                              }),
-                            );
+                            try {
+                              final response = await http.post(
+                                Uri.parse('$serverUrl/admin_login/'),
+                                headers: {'Content-Type': 'application/json'},
+                                body: json.encode({
+                                  'username': _adminUsernameController.text,
+                                  'password': _adminPasswordController.text,
+                                }),
+                              );
 
-                            if (response.statusCode == 200) {
-                              final data =
-                                  json.decode(utf8.decode(response.bodyBytes));
-                              if (mounted) {
-                                Navigator.of(context).pop();
-                                Navigator.of(context).pushReplacement(
-                                  MaterialPageRoute(
-                                    builder: (context) => LoadingPage.admin(
-                                      adminUserId: data['user_id'],
-                                      adminUsername: data['username'],
+                              if (response.statusCode == 200) {
+                                final data = json
+                                    .decode(utf8.decode(response.bodyBytes));
+                                if (mounted) {
+                                  Navigator.of(context).pop();
+                                  Navigator.of(context).pushReplacement(
+                                    MaterialPageRoute(
+                                      builder: (context) => LoadingPage.admin(
+                                        adminUserId: data['user_id'],
+                                        adminUsername: data['username'],
+                                      ),
                                     ),
-                                  ),
-                                );
+                                  );
+                                }
+                              } else {
+                                final errorData = json
+                                    .decode(utf8.decode(response.bodyBytes));
+                                setDialogState(() {
+                                  adminError = errorData['detail'] ?? '로그인 실패';
+                                });
                               }
-                            } else {
-                              final errorData =
-                                  json.decode(utf8.decode(response.bodyBytes));
+                            } catch (e) {
                               setDialogState(() {
-                                adminError = errorData['detail'] ?? '로그인 실패';
+                                adminError = '오류가 발생했습니다.';
+                              });
+                            } finally {
+                              setDialogState(() {
+                                isAdminLoading = false;
                               });
                             }
-                          } catch (e) {
-                            setDialogState(() {
-                              adminError = '오류가 발생했습니다.';
-                            });
-                          } finally {
-                            setDialogState(() {
-                              isAdminLoading = false;
-                            });
-                          }
-                        },
-                  child: isAdminLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('로그인'),
-                ),
-              ],
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).primaryColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             );
           },
         );
@@ -299,80 +390,83 @@ class _LoginPageState extends State<LoginPage> {
             ),
           ),
           Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.travel_explore, size: 80, color: Colors.white),
-                const SizedBox(height: 24),
-                // --- [수정] GestureDetector 제거 ---
-                const Text(
-                  '나만의 여행 일지를 만들어보세요!',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    shadows: [
-                      Shadow(
-                        blurRadius: 10.0,
-                        color: Colors.black45,
-                        offset: Offset(2.0, 2.0),
-                      ),
-                    ],
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  '지금 바로 여행을 시작해 보세요!',
-                  style: TextStyle(fontSize: 16, color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 64),
-                _isLoading
-                    ? const CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      )
-                    : GestureDetector(
-                        onTap: () => _loginWithKakao(context),
-                        child: Image.asset(
-                          'assets/kakao_login_large_wide.png',
-                          width: MediaQuery.of(context).size.width * 0.8,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.travel_explore,
+                      size: 80, color: Colors.white),
+                  const SizedBox(height: 24),
+                  const Text(
+                    '나만의 여행 일지를 만들어보세요!',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      shadows: [
+                        Shadow(
+                          blurRadius: 10.0,
+                          color: Colors.black45,
+                          offset: Offset(2.0, 2.0),
                         ),
+                      ],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '지금 바로 여행을 시작해 보세요!',
+                    style: TextStyle(fontSize: 16, color: Colors.white70),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 64),
+                  _isLoading
+                      ? const CircularProgressIndicator(
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(Colors.white),
+                        )
+                      : GestureDetector(
+                          onTap: () => _loginWithKakao(context),
+                          child: Image.asset(
+                            'assets/kakao_login_large_wide.png',
+                            width: MediaQuery.of(context).size.width * 0.8,
+                          ),
+                        ),
+                  const SizedBox(height: 20),
+                  TextButton(
+                    onPressed: () => _startAsGuest(context),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 10,
                       ),
-                const SizedBox(height: 20),
-                TextButton(
-                  onPressed: () => _startAsGuest(context),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 10,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: const BorderSide(color: Colors.white70),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      side: const BorderSide(color: Colors.white70),
-                    ),
+                    child: const Text('게스트로 시작하기'),
                   ),
-                  child: const Text('게스트로 시작하기'),
-                ),
-                // --- [수정] 어드민 로그인 버튼 추가 ---
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: _showAdminLoginDialog,
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 10,
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: _showAdminLoginDialog,
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 10,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: const BorderSide(color: Colors.white70),
+                      ),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      side: const BorderSide(color: Colors.white70),
-                    ),
+                    child: const Text('어드민으로 로그인'),
                   ),
-                  child: const Text('어드민으로 로그인'),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           if (_errorMessage != null) _buildErrorOverlay(),

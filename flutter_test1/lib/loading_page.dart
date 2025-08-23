@@ -1,7 +1,10 @@
 // lib/loading_page.dart
 
 import 'dart:convert';
+import 'dart:math';
+import 'package:flutter/foundation.dart'; // [추가] compute 함수를 사용하기 위해 import
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'dart:typed_data';
@@ -14,10 +17,46 @@ import 'quest_model.dart';
 import 'login_page.dart';
 import 'config.dart';
 
+// --- [수정] 이미지 처리를 위한 Isolate용 최상위 함수 ---
+// compute 함수는 최상위 함수 또는 static 메소드만 호출할 수 있습니다.
+// 이 함수는 이제 별도의 작업 공간(Isolate)에서 실행됩니다.
+Future<PhotoItem> _resizeAndEncodeIsolate(PhotoItem photo) async {
+  try {
+    final response = await http.get(Uri.parse(photo.galWebImageUrl));
+    if (response.statusCode == 200) {
+      img.Image? originalImage = img.decodeImage(response.bodyBytes);
+      if (originalImage != null) {
+        img.Image resizedImage = img.copyResize(originalImage, width: 200);
+        Uint8List jpgBytes =
+            Uint8List.fromList(img.encodeJpg(resizedImage, quality: 85));
+        String base64String = base64Encode(jpgBytes);
+        //copyWith을 사용하여 새로운 PhotoItem 객체를 반환합니다.
+        return photo.copyWith(
+            base64Thumbnail: 'data:image/jpeg;base64,$base64String');
+      }
+    }
+  } catch (e) {
+    // Isolate 내에서 발생하는 오류는 메인 Isolate로 전파되지 않으므로,
+    // 여기서 직접 출력하여 디버깅해야 합니다.
+    debugPrint('이미지 처리 Isolate 오류 (${photo.galTitle}): $e');
+  }
+  // 실패 시 원본 PhotoItem을 그대로 반환합니다.
+  return photo;
+}
+
+class WaveAnimationNotifier extends ChangeNotifier {
+  double _phase = 0.0;
+  double get phase => _phase;
+
+  void update(Duration elapsed) {
+    _phase = (elapsed.inMilliseconds / 2000) * 2 * pi;
+    notifyListeners();
+  }
+}
+
 class LoadingPage extends StatefulWidget {
   final User? user;
   final bool isGuest;
-  // --- [추가] Admin 정보를 위한 필드 ---
   final String? adminUserId;
   final String? adminUsername;
 
@@ -32,7 +71,6 @@ class LoadingPage extends StatefulWidget {
         adminUserId = null,
         adminUsername = null;
 
-  // --- [추가] Admin을 위한 생성자 ---
   const LoadingPage.admin({
     super.key,
     required this.adminUserId,
@@ -44,9 +82,13 @@ class LoadingPage extends StatefulWidget {
   State<LoadingPage> createState() => _LoadingPageState();
 }
 
-class _LoadingPageState extends State<LoadingPage> {
+class _LoadingPageState extends State<LoadingPage>
+    with SingleTickerProviderStateMixin {
   double _progress = 0.0;
   String _loadingMessage = '여행 준비를 시작합니다...';
+
+  late final Ticker _ticker;
+  final WaveAnimationNotifier _waveNotifier = WaveAnimationNotifier();
 
   final String baseUrl = 'https://apis.data.go.kr/B551011/PhotoGalleryService1';
   final String serviceKey =
@@ -77,9 +119,21 @@ class _LoadingPageState extends State<LoadingPage> {
   @override
   void initState() {
     super.initState();
+    _ticker = createTicker((elapsed) {
+      _waveNotifier.update(elapsed);
+    });
+    _ticker.start();
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadAllGameData();
     });
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    _waveNotifier.dispose();
+    super.dispose();
   }
 
   void _updateProgress(double value, String message) {
@@ -91,23 +145,24 @@ class _LoadingPageState extends State<LoadingPage> {
     }
   }
 
+  // --- [수정] 이미지 처리 로직을 compute를 사용하도록 변경 ---
   Future<List<PhotoItem>> _processImages(List<PhotoItem> photos) async {
     List<PhotoItem> processedPhotos = [];
-    // 이미지 처리는 CPU를 많이 사용하므로 동시 처리를 제한하여 앱의 반응성을 유지
-    int concurrentJobs = 5;
+    int concurrentJobs = 5; // 동시에 처리할 작업 수
     List<Future<PhotoItem>> futures = [];
 
     for (int i = 0; i < photos.length; i++) {
       final photo = photos[i];
-      futures.add(_resizeAndEncode(photo));
+      // compute를 사용하여 _resizeAndEncodeIsolate 함수를 별도의 Isolate에서 실행합니다.
+      futures.add(compute(_resizeAndEncodeIsolate, photo));
 
-      // 5개씩 묶어서 처리하거나 마지막 아이템일 경우
+      // 동시에 처리할 작업 수가 채워지거나 마지막 사진일 경우, 모든 작업이 끝날 때까지 기다립니다.
       if (futures.length == concurrentJobs || i == photos.length - 1) {
         final results = await Future.wait(futures);
         processedPhotos.addAll(results);
-        futures.clear(); // 다음 배치를 위해 리스트 비우기
+        futures.clear(); // 다음 배치를 위해 리스트를 비웁니다.
 
-        // 진행 상황 업데이트
+        // 진행률을 업데이트합니다.
         _updateProgress(0.5 + (0.2 * (processedPhotos.length / photos.length)),
             '관광지 이미지 최적화 중... (${processedPhotos.length}/${photos.length})');
       }
@@ -115,38 +170,14 @@ class _LoadingPageState extends State<LoadingPage> {
     return processedPhotos;
   }
 
-  // [추가] 개별 이미지 리사이징 및 Base64 인코딩 함수
-  Future<PhotoItem> _resizeAndEncode(PhotoItem photo) async {
-    try {
-      final response = await http.get(Uri.parse(photo.galWebImageUrl));
-      if (response.statusCode == 200) {
-        // 이미지 디코딩
-        img.Image? originalImage = img.decodeImage(response.bodyBytes);
-        if (originalImage != null) {
-          // 이미지 리사이징 (너비 200px, 높이는 비율에 맞게 자동 조절)
-          img.Image resizedImage = img.copyResize(originalImage, width: 200);
-          // JPEG 형식으로 인코딩
-          Uint8List jpgBytes =
-              Uint8List.fromList(img.encodeJpg(resizedImage, quality: 85));
-          // Base64 문자열로 변환
-          String base64String = base64Encode(jpgBytes);
-          // 데이터 URI 형식으로 완성 후 PhotoItem에 저장
-          return photo.copyWith(
-              base64Thumbnail: 'data:image/jpeg;base64,$base64String');
-        }
-      }
-    } catch (e) {
-      print('이미지 처리 오류 (${photo.galTitle}): $e');
-    }
-    // 실패 시 원본 PhotoItem 반환
-    return photo;
-  }
+  // ▼▼▼ 이 함수는 이제 사용되지 않으므로 삭제하거나 주석 처리해도 됩니다. ▼▼▼
+  // Future<PhotoItem> _resizeAndEncode(PhotoItem photo) async { ... }
 
-  // --- [수정] _getOrCreateUser 함수: 로그인 방식에 따라 다른 API 호출 ---
+  // (이하 다른 함수들은 변경 사항 없음)
+
   Future<Map<String, String>?> _getOrCreateUser() async {
     try {
       if (widget.isGuest) {
-        // 게스트 로그인 API 호출
         final response = await http.post(
           Uri.parse('$serverUrl/guest_login/'),
         );
@@ -155,7 +186,6 @@ class _LoadingPageState extends State<LoadingPage> {
           return {'user_id': data['user_id'], 'username': data['username']};
         }
       } else if (widget.user != null) {
-        // 카카오 로그인 (기존 로직)
         final String? username = widget.user?.kakaoAccount?.profile?.nickname;
         final String? profileImageUrl =
             widget.user?.kakaoAccount?.profile?.thumbnailImageUrl;
@@ -172,29 +202,24 @@ class _LoadingPageState extends State<LoadingPage> {
         );
         if (response.statusCode == 200) {
           final data = json.decode(utf8.decode(response.bodyBytes));
-          // API 응답에서 username을 받아올 수 있지만, 카카오 닉네임을 그대로 사용
           return {'user_id': data['user_id'], 'username': username};
         }
       }
     } catch (e) {
-      print('User creation/retrieval error: $e');
+      debugPrint('User creation/retrieval error: $e');
     }
     return null;
   }
 
-  // --- [수정] _loadAllGameData 함수: 3가지 로그인 방식 처리 ---
   Future<void> _loadAllGameData() async {
     try {
       _updateProgress(0.1, '사용자 정보 확인 중...');
       String? userId;
       String? username;
-      // admin, guest, kakao 로그인 여부를 확인하여 userId와 username 설정
       if (widget.adminUserId != null) {
-        // 1. Admin 로그인
         userId = widget.adminUserId;
         username = widget.adminUsername;
       } else {
-        // 2. Kakao 또는 Guest 로그인
         final userInfo = await _getOrCreateUser();
         if (userInfo == null) throw Exception("사용자 정보를 가져올 수 없습니다.");
         userId = userInfo['user_id'];
@@ -232,7 +257,7 @@ class _LoadingPageState extends State<LoadingPage> {
 
       final gameData = GameData(
         userId: userId,
-        username: username, // [추가] username 전달
+        username: username,
         sessionId: sessionId,
         currentUser: widget.user,
         isGuest: widget.isGuest,
@@ -244,7 +269,7 @@ class _LoadingPageState extends State<LoadingPage> {
         keywordSearchedPhotos: keywordPhotos,
         placeCoords: placeCoords,
         rankings: rankings,
-        quests: questData['quests'],
+        quests: questData['quests'] as List<Quest>,
         questProgress: questData['questProgress'],
       );
 
@@ -256,12 +281,11 @@ class _LoadingPageState extends State<LoadingPage> {
         );
       }
     } catch (e) {
-      print("데이터 로딩 중 심각한 오류 발생: $e");
+      debugPrint("데이터 로딩 중 심각한 오류 발생: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('데이터를 불러오는데 실패했습니다: $e')),
         );
-        // [추가] 오류 발생 시 로그인 페이지로 복귀
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (context) => const LoginPage()),
         );
@@ -269,7 +293,6 @@ class _LoadingPageState extends State<LoadingPage> {
     }
   }
 
-  // (이하 다른 함수들은 이전과 거의 동일)
   Future<List<PhotoItem>> _fetchKeywordSearchPhotos(String keyword) async {
     try {
       final url = Uri.parse('$baseUrl/gallerySearchList1').replace(
@@ -293,7 +316,7 @@ class _LoadingPageState extends State<LoadingPage> {
         }
       }
     } catch (e) {
-      print('키워드 검색 사진 로드 오류: $e');
+      debugPrint('키워드 검색 사진 로드 오류: $e');
     }
     return [];
   }
@@ -306,7 +329,7 @@ class _LoadingPageState extends State<LoadingPage> {
         return json.decode(utf8.decode(response.bodyBytes));
       }
     } catch (e) {
-      print('User profile loading error: $e');
+      debugPrint('User profile loading error: $e');
     }
     return {'total_score': 0, 'visit_history': []};
   }
@@ -314,8 +337,6 @@ class _LoadingPageState extends State<LoadingPage> {
   Future<Map<String, List<PhotoItem>>> _fetchTouristSpotPhotos() async {
     final List<PhotoItem> touristSpotPhotos = [];
     final List<PhotoItem> allSeoulPhotos = [];
-
-    // 서버에서 로컬 이미지 URL 맵 가져오기
     Map<String, String> localImageUrls = {};
     try {
       final response =
@@ -325,7 +346,7 @@ class _LoadingPageState extends State<LoadingPage> {
             json.decode(utf8.decode(response.bodyBytes)));
       }
     } catch (e) {
-      print('Error fetching local image URLs: $e');
+      debugPrint('Error fetching local image URLs: $e');
     }
 
     try {
@@ -350,7 +371,6 @@ class _LoadingPageState extends State<LoadingPage> {
       final seoulPhotos = photos
           .where((p) => p.galPhotographyLocation.toLowerCase().contains('서울'))
           .toList();
-
       allSeoulPhotos.addAll(seoulPhotos);
 
       final Map<String, PhotoItem> foundPhotosMap = {};
@@ -382,7 +402,7 @@ class _LoadingPageState extends State<LoadingPage> {
         foundPhotosMap[keyword] = PhotoItem(
           galContentId: keyword,
           galTitle: keyword,
-          galWebImageUrl: '$serverUrl/map_images/$keyword.jpg', // 기본 URL 설정
+          galWebImageUrl: '$serverUrl/map_images/$keyword.jpg',
           galCreatedtime: '',
           galModifiedtime: '',
           galPhotographyMonth: '',
@@ -395,20 +415,16 @@ class _LoadingPageState extends State<LoadingPage> {
       for (var keyword in targetKeywords) {
         if (foundPhotosMap.containsKey(keyword)) {
           PhotoItem photoToAdd = foundPhotosMap[keyword]!;
-
-          // 'map_images' 폴더에 해당 관광지 이미지가 있으면 API URL을 덮어쓰기
           if (localImageUrls.containsKey(keyword)) {
             final localPath = localImageUrls[keyword]!;
             final finalImageUrl = '$serverUrl$localPath';
-
-            // 기존 PhotoItem 객체를 복사하여 galWebImageUrl만 변경
             photoToAdd = photoToAdd.copyWith(galWebImageUrl: finalImageUrl);
           }
           touristSpotPhotos.add(photoToAdd);
         }
       }
     } catch (e) {
-      print('관광지 사진 로드 오류: $e');
+      debugPrint('관광지 사진 로드 오류: $e');
     }
     return {
       'touristSpotPhotos': touristSpotPhotos,
@@ -432,7 +448,7 @@ class _LoadingPageState extends State<LoadingPage> {
         return coords;
       }
     } catch (e) {
-      print('Place coordinates loading error: $e');
+      debugPrint('Place coordinates loading error: $e');
     }
     return {};
   }
@@ -445,7 +461,7 @@ class _LoadingPageState extends State<LoadingPage> {
         return List<Map<String, dynamic>>.from(data['rankings']);
       }
     } catch (e) {
-      print('Ranking info loading error: $e');
+      debugPrint('Ranking info loading error: $e');
     }
     return [];
   }
@@ -470,9 +486,10 @@ class _LoadingPageState extends State<LoadingPage> {
         };
       }
     } catch (e) {
-      print('Quest data loading error: $e');
+      debugPrint('Quest data loading error: $e');
     }
-    return {'quests': [], 'questProgress': null};
+    // ▼▼▼ [FIX] Return a list with the explicit type <Quest> ▼▼▼
+    return {'quests': <Quest>[], 'questProgress': null};
   }
 
   Future<String?> _startGameSession(String userId) async {
@@ -486,7 +503,7 @@ class _LoadingPageState extends State<LoadingPage> {
         return json.decode(utf8.decode(response.bodyBytes))['session_id'];
       }
     } catch (e) {
-      print('Game session start error: $e');
+      debugPrint('Game session start error: $e');
     }
     return null;
   }
@@ -495,6 +512,7 @@ class _LoadingPageState extends State<LoadingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
+        // (UI 관련 코드는 변경 없음)
         decoration: BoxDecoration(
           image: DecorationImage(
             image: const AssetImage('assets/seoul_background.png'),
@@ -509,42 +527,37 @@ class _LoadingPageState extends State<LoadingPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              TweenAnimationBuilder<double>(
-                tween: Tween(end: _progress),
-                duration: const Duration(milliseconds: 400),
-                builder: (context, value, child) {
-                  return Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      SizedBox(
-                        width: 120,
-                        height: 120,
-                        child: CircularProgressIndicator(
-                          value: value,
-                          strokeWidth: 10,
-                          backgroundColor: Colors.white.withOpacity(0.3),
-                          valueColor:
-                              const AlwaysStoppedAnimation<Color>(Colors.white),
-                          strokeCap: StrokeCap.round,
-                        ),
+              SizedBox(
+                width: 150,
+                height: 150,
+                child: AnimatedBuilder(
+                  animation: _waveNotifier,
+                  builder: (context, child) {
+                    return CustomPaint(
+                      painter: WaveProgressPainter(
+                        phase: _waveNotifier.phase,
+                        progress: _progress,
                       ),
-                      Text(
-                        '${(value * 100).toInt()}%',
-                        style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            shadows: [
-                              Shadow(
-                                blurRadius: 4.0,
-                                color: Colors.black45,
-                                offset: Offset(1.0, 1.0),
-                              ),
-                            ]),
-                      ),
-                    ],
-                  );
-                },
+                      child: child,
+                    );
+                  },
+                  child: Center(
+                    child: Text(
+                      '${(_progress * 100).toInt()}%',
+                      style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          shadows: [
+                            Shadow(
+                              blurRadius: 4.0,
+                              color: Colors.black45,
+                              offset: Offset(1.0, 1.0),
+                            ),
+                          ]),
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 32),
               Text(
@@ -561,4 +574,60 @@ class _LoadingPageState extends State<LoadingPage> {
       ),
     );
   }
+}
+
+// (WaveProgressPainter 클래스는 변경 없음)
+class WaveProgressPainter extends CustomPainter {
+  final double phase;
+  final double progress;
+
+  WaveProgressPainter({required this.phase, required this.progress});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    final backgroundPaint = Paint()
+      ..color = Colors.white.withOpacity(0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 10;
+    canvas.drawCircle(center, radius, backgroundPaint);
+
+    final wavePaint = Paint()..color = Colors.white.withOpacity(0.8);
+    final wavePaint2 = Paint()..color = Colors.white.withOpacity(0.5);
+
+    final path = Path();
+    final path2 = Path();
+
+    final waveHeight = (1 - progress) * size.height;
+
+    path.moveTo(0, waveHeight);
+    path2.moveTo(0, waveHeight);
+
+    for (double i = 0; i < size.width; i++) {
+      final y = sin((i / size.width * 2 * pi) + phase) * 5;
+      path.lineTo(i, waveHeight + y);
+      final y2 = sin((i / size.width * 2 * pi) + phase + pi) * 5;
+      path2.lineTo(i, waveHeight + y2);
+    }
+
+    path.lineTo(size.width, size.height);
+    path.lineTo(0, size.height);
+    path.close();
+
+    path2.lineTo(size.width, size.height);
+    path2.lineTo(0, size.height);
+    path2.close();
+
+    final circleClip = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: radius));
+    canvas.clipPath(circleClip);
+
+    canvas.drawPath(path2, wavePaint2);
+    canvas.drawPath(path, wavePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
