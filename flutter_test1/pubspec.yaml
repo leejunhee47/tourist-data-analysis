@@ -52,7 +52,7 @@ dependencies:
   url_launcher: ^6.1.14
   flutter_launcher_icons: ^0.13.1
   image: ^4.1.0
-  #  flutter_native_splash: ^2.4.0
+  flutter_native_splash: ^2.4.0
 
   flutter_web_plugins:
     sdk: flutter
@@ -69,13 +69,9 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^2.0.3
-#  flutter_native_splash: ^2.4.0
+  flutter_native_splash: ^2.4.0
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
-
-# flutter_launcher_icons:
-#   android: "launcher_icon"
-#   image_path_android: "assets/아이콘.png"
 
 # The following section is specific to Flutter packages.
 flutter:
@@ -122,12 +118,16 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
-# flutter_native_splash:
-#   color: "#FFFFFF"
-#   image: assets/아이콘2.png
+flutter_launcher_icons:
+  android: "launcher_icon"
+  image_path_android: "assets/아이콘1.png"
 
-#   android_gravity: center
+flutter_native_splash:
+  color: "#FFFFFF"
+  image: assets/아이콘2.png
 
-#   android_12:
-#     color: "#FFFFFF"
-#     image: assets/아이콘2.png
+  android_gravity: center
+
+  android_12:
+    color: "#FFFFFF"
+    image: assets/아이콘2.png

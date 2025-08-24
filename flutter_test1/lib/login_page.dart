@@ -395,11 +395,11 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.travel_explore,
+                  const Icon(Icons.flag_circle_outlined,
                       size: 80, color: Colors.white),
                   const SizedBox(height: 24),
                   const Text(
-                    '나만의 여행 일지를 만들어보세요!',
+                    '관광지를 찾아 떠나보세요!',
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
@@ -416,7 +416,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    '지금 바로 여행을 시작해 보세요!',
+                    '퀘스트를 완료하고 랭킹에 도전하세요.',
                     style: TextStyle(fontSize: 16, color: Colors.white70),
                     textAlign: TextAlign.center,
                   ),
