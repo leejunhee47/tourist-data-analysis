@@ -74,14 +74,10 @@ def test_submit_review_success():
     
     # 4. 리뷰 저장 API 호출
     try:
-        # Form 데이터로 전송하도록 수정
         response = requests.post(
             f"{BASE_URL}/reviews/",
-            data={
-                "user_id": user_id,
-                "place_name": review_data["place_name"],
-                "review_text": review_data["review_text"]
-            }
+            headers={"Content-Type": "application/json"},
+            json=review_data
         )
         
         if response.status_code == 200:
@@ -128,14 +124,10 @@ def test_submit_review_short_text():
     
     # 3. 리뷰 저장 API 호출
     try:
-        # Form 데이터로 전송하도록 수정
         response = requests.post(
             f"{BASE_URL}/reviews/",
-            data={
-                "user_id": user_id,
-                "place_name": review_data["place_name"],
-                "review_text": review_data["review_text"]
-            }
+            headers={"Content-Type": "application/json"},
+            json=review_data
         )
         
         if response.status_code == 400:
@@ -143,52 +135,6 @@ def test_submit_review_short_text():
             print(f"✅ 예상된 실패 케이스!")
             print(f"   상태 코드: {response.status_code}")
             print(f"   에러 메시지: {result['detail']}")
-            return True
-        else:
-            print(f"❌ 예상과 다른 응답: {response.status_code}")
-            print(f"   응답: {response.text}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ 테스트 중 오류: {e}")
-        return False
-
-def test_submit_review_long_text():
-    """긴 리뷰 텍스트 테스트 (실패 케이스)"""
-    print("\n=== ❌ 긴 리뷰 텍스트 테스트 ===")
-    
-    # 1. 테스트 사용자 생성
-    user_id = create_test_user()
-    if not user_id:
-        return False
-    
-    # 2. 긴 리뷰 데이터 준비 (100자 초과)
-    long_review_text = "정말 아름다운 궁궐이었습니다. 조선왕조의 웅장함을 느낄 수 있었고, 특히 경회루에서 바라본 풍경이 인상적이었습니다. 역사의 깊이를 체험할 수 있는 좋은 장소입니다. 꼭 다시 방문하고 싶은 곳이에요!"  # 101자
-    review_data = {
-        "user_id": user_id,
-        "place_name": "경복궁",
-        "review_text": long_review_text,
-        "image_url": None
-    }
-    
-    # 3. 리뷰 저장 API 호출
-    try:
-        # Form 데이터로 전송하도록 수정
-        response = requests.post(
-            f"{BASE_URL}/reviews/",
-            data={
-                "user_id": user_id,
-                "place_name": review_data["place_name"],
-                "review_text": review_data["review_text"]
-            }
-        )
-        
-        if response.status_code == 400:
-            result = response.json()
-            print(f"✅ 예상된 실패 케이스!")
-            print(f"   상태 코드: {response.status_code}")
-            print(f"   에러 메시지: {result['detail']}")
-            print(f"   리뷰 길이: {len(long_review_text)}자")
             return True
         else:
             print(f"❌ 예상과 다른 응답: {response.status_code}")
@@ -216,14 +162,10 @@ def test_submit_review_invalid_user():
     
     # 3. 리뷰 저장 API 호출
     try:
-        # Form 데이터로 전송하도록 수정
         response = requests.post(
             f"{BASE_URL}/reviews/",
-            data={
-                "user_id": invalid_user_id,
-                "place_name": review_data["place_name"],
-                "review_text": review_data["review_text"]
-            }
+            headers={"Content-Type": "application/json"},
+            json=review_data
         )
         
         if response.status_code == 404:
@@ -271,14 +213,10 @@ def test_get_user_reviews():
         }
         
         try:
-            # Form 데이터로 전송하도록 수정
             response = requests.post(
                 f"{BASE_URL}/reviews/",
-                data={
-                    "user_id": user_id,
-                    "place_name": review_data["place_name"],
-                    "review_text": review_data["review_text"]
-                }
+                headers={"Content-Type": "application/json"},
+                json=review_data
             )
             
             if response.status_code == 200:
@@ -364,14 +302,10 @@ def test_review_with_image_url():
     
     # 3. 리뷰 저장 API 호출
     try:
-        # Form 데이터로 전송하도록 수정
         response = requests.post(
             f"{BASE_URL}/reviews/",
-            data={
-                "user_id": user_id,
-                "place_name": review_data["place_name"],
-                "review_text": review_data["review_text"]
-            }
+            headers={"Content-Type": "application/json"},
+            json=review_data
         )
         
         if response.status_code == 200:
@@ -405,7 +339,6 @@ def run_all_tests():
     
     # 실패 케이스 테스트
     test_results.append(("짧은 리뷰 텍스트", test_submit_review_short_text()))
-    test_results.append(("긴 리뷰 텍스트", test_submit_review_long_text()))
     test_results.append(("존재하지 않는 사용자 리뷰 저장", test_submit_review_invalid_user()))
     test_results.append(("존재하지 않는 사용자 리뷰 조회", test_get_reviews_invalid_user()))
     

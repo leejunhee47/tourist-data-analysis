@@ -9,7 +9,7 @@ from datetime import datetime
 from clip_lora_inference import CLIPLoRAInference
 from typing import List, Optional
 from pydantic import BaseModel
-from firebase_admin import firestore, storage # [수정] storage import 추가
+from firebase_admin import firestore, storage
 from firebase_config import initialize_firebase, USERS_COLLECTION, GAME_SESSIONS_COLLECTION, VISITS_COLLECTION
 from quest_system import (
     generate_daily_quests,
@@ -24,9 +24,8 @@ from quest_system import (
 
 app = FastAPI()
 
-# [수정] 리뷰 이미지 서빙을 위한 static 디렉토리 마운트 제거 (Firebase 사용)
+# Static 파일 마운트
 app.mount("/map_images", StaticFiles(directory="map_images"), name="map_images")
-# app.mount("/review_images", StaticFiles(directory="review_images"), name="review_images") # 이 줄을 제거
 
 MAX_DISTANCE_M = 100
 
@@ -44,26 +43,28 @@ db = initialize_firebase()
 if not db:
     raise Exception("Firebase 초기화에 실패했습니다.")
 
-# ▼▼▼ [추가] Firebase Storage 초기화 (api.py 참고) ▼▼▼
+# Firebase Storage 초기화
 try:
     bucket = storage.bucket(name='tourapi-77ca1.firebasestorage.app')
     print("✅ Firebase Storage 초기화 성공")
 except Exception as e:
     print(f"❌ Firebase Storage 초기화 실패: {e}")
     bucket = None
-# ▲▲▲ [추가] Firebase Storage 초기화 (api.py 참고) ▲▲▲
 
 # 임시 이미지 저장 폴더 생성
 TEMP_DIR = "temp_images"
 os.makedirs(TEMP_DIR, exist_ok=True)
-# [수정] 로컬 리뷰 이미지 저장 폴더 생성 코드 제거
-# REVIEW_IMAGES_DIR = "review_images"
-# os.makedirs(REVIEW_IMAGES_DIR, exist_ok=True)
 
 # CLIP-LoRA 모델 초기화
 inferencer = CLIPLoRAInference()
 
-# ▼▼▼ [추가] 리뷰 이미지 저장 함수 (api.py 참고) ▼▼▼
+# ▼▼▼ [추가] 어드민 계정 정보 상수 ▼▼▼
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin"
+ADMIN_USER_ID = "admin-user-001"
+# ▲▲▲ [추가] 어드민 계정 정보 상수 ▲▲▲
+
+# ▼▼▼ [추가] 리뷰 이미지 저장 함수 ▼▼▼
 def save_review_image_to_storage(image_path: str, user_id: str, review_id: str) -> Optional[str]:
     """
     리뷰 이미지를 Firebase Storage에 저장하고 다운로드 URL을 반환합니다.
@@ -78,8 +79,6 @@ def save_review_image_to_storage(image_path: str, user_id: str, review_id: str) 
             return None
         
         file_extension = os.path.splitext(image_path)[1].lower() or '.jpg'
-        
-        # Storage 경로를 리뷰 전용으로 지정
         storage_path = f"review_images/{user_id}/{review_id}{file_extension}"
         
         blob = bucket.blob(storage_path)
@@ -93,13 +92,142 @@ def save_review_image_to_storage(image_path: str, user_id: str, review_id: str) 
     except Exception as e:
         print(f"❌ 리뷰 이미지 저장 실패: {e}")
         return None
-# ▲▲▲ [추가] 리뷰 이미지 저장 함수 (api.py 참고) ▲▲▲
+# ▲▲▲ [추가] 리뷰 이미지 저장 함수 ▲▲▲
+
+# ▼▼▼ [추가] Firebase Storage 이미지 저장 함수 ▼▼▼
+def save_image_to_storage(image_path: str, user_id: str, place_name: str, visit_id: str) -> Optional[str]:
+    """
+    이미지를 Firebase Storage에 저장하고 다운로드 URL을 반환합니다.
+    
+    Args:
+        image_path: 로컬 이미지 파일 경로
+        user_id: 사용자 ID
+        place_name: 방문한 장소명
+        visit_id: 방문 기록 ID
+    
+    Returns:
+        str: Firebase Storage 다운로드 URL
+    """
+    try:
+        print(f"📸 Firebase Storage 이미지 저장 시작...")
+        print(f"   입력 파일: {image_path}")
+        print(f"   사용자 ID: {user_id}")
+        print(f"   장소명: {place_name}")
+        print(f"   방문 ID: {visit_id}")
+        
+        # Firebase Storage bucket 확인
+        if bucket is None:
+            print("❌ Firebase Storage bucket이 초기화되지 않았습니다")
+            return None
+        
+        # 파일 존재 확인
+        if not os.path.exists(image_path):
+            print(f"❌ 이미지 파일이 존재하지 않습니다: {image_path}")
+            return None
+        
+        # 파일 확장자 확인
+        file_extension = os.path.splitext(image_path)[1].lower()
+        if file_extension not in ['.jpg', '.jpeg', '.png', '.gif']:
+            file_extension = '.jpg'  # 기본값
+        
+        # Storage 경로 생성 (success_images 경로에 저장)
+        storage_path = f"success_images/{user_id}/{visit_id}_{place_name}{file_extension}"
+        print(f"   Storage 경로: {storage_path}")
+        
+        # 파일을 Storage에 업로드
+        blob = bucket.blob(storage_path)
+        print(f"   Blob 생성 완료: {blob.name}")
+        
+        blob.upload_from_filename(image_path)
+        print(f"   파일 업로드 완료")
+        
+        # 공개 URL 설정 (읽기 권한)
+        blob.make_public()
+        
+        # 다운로드 URL 반환
+        download_url = blob.public_url
+        
+        print(f"📸 이미지 저장 완료: {storage_path}")
+        print(f"   URL: {download_url}")
+        
+        return download_url
+        
+    except Exception as e:
+        print(f"❌ 이미지 저장 실패: {e}")
+        return None
+# ▲▲▲ [추가] Firebase Storage 이미지 저장 함수 ▲▲▲
+
+# ▼▼▼ [추가] 사용자 성공 이미지 조회 함수 ▼▼▼
+def get_user_success_images(user_id: str) -> List[dict]:
+    """
+    특정 사용자의 모든 성공 이미지를 조회합니다.
+    
+    Args:
+        user_id: 사용자 ID
+    
+    Returns:
+        List[dict]: 성공 이미지 목록
+    """
+    try:
+        # 방문 기록에서 정답을 맞힌 기록만 조회 (인덱스 사용)
+        visits_ref = db.collection(VISITS_COLLECTION)
+        visits = visits_ref.where('user_id', '==', user_id).where('is_correct', '==', True).order_by('visit_time', direction=firestore.Query.DESCENDING).get()
+        
+        success_images = []
+        for visit in visits:
+            visit_data = visit.to_dict()
+            if visit_data.get('image_url'):  # 이미지 URL이 있는 경우만
+                success_images.append({
+                    'visit_id': visit_data.get('visit_id'),
+                    'place_name': visit_data.get('target_place'),
+                    'image_url': visit_data.get('image_url'),
+                    'visit_time': visit_data.get('visit_time'),
+                    'confidence': visit_data.get('confidence', 0),
+                    'score_earned': visit_data.get('score_earned', 0)
+                })
+        
+        return success_images
+        
+    except Exception as e:
+        print(f"❌ 성공 이미지 조회 실패: {e}")
+        return []
+# ▲▲▲ [추가] 사용자 성공 이미지 조회 함수 ▲▲▲
+
+# ▼▼▼ [추가] 사용자 생성 헬퍼 함수 ▼▼▼
+def create_user_in_db(user_id: str, username: str, profile_image_url: str = "", is_admin: bool = False, is_guest: bool = False) -> dict:
+    """
+    사용자를 데이터베이스에 생성하는 공통 함수
+    """
+    users_ref = db.collection(USERS_COLLECTION)
+    user_ref = users_ref.document(user_id)
+    
+    user_data = {
+        'user_id': user_id,
+        'username': username,
+        'total_score': 0,
+        'profile_image_url': profile_image_url,
+        'created_at': firestore.SERVER_TIMESTAMP
+    }
+    
+    # 어드민 또는 게스트 플래그 추가
+    if is_admin:
+        user_data['is_admin'] = True
+    if is_guest:
+        user_data['is_guest'] = True
+    
+    user_ref.set(user_data)
+    return user_data
+# ▲▲▲ [추가] 사용자 생성 헬퍼 함수 ▲▲▲
 
 
 # Pydantic 모델들
 class UserCreate(BaseModel):
     username: str
     profile_image_url: Optional[str] = None
+
+class AdminLogin(BaseModel):
+    username: str
+    password: str
 
 class GameSessionCreate(BaseModel):
     user_id: str
@@ -140,14 +268,6 @@ class QuizAnswerRequest(BaseModel):
 class QuizQuestCreateRequest(BaseModel):
     user_id: str
 
-# ▼▼▼ [수정] 리뷰 관련 모델 수정 ▼▼▼
-# 기존 ReviewRequest 모델은 사용하지 않으므로 주석 처리
-# class ReviewRequest(BaseModel):
-#     user_id: str
-#     place_name: str
-#     review_text: str
-#     image_url: Optional[str] = None
-
 class ReviewResponse(BaseModel):
     review_id: str
     user_id: str
@@ -158,7 +278,6 @@ class ReviewResponse(BaseModel):
     score_earned: int
     message: str
 
-# ▼▼▼ [추가] 장소별 리뷰 조회를 위한 Pydantic 모델 추가 ▼▼▼
 class UserInfo(BaseModel):
     username: str
     profile_image_url: Optional[str] = None
@@ -172,9 +291,7 @@ class PlaceReviewResponse(BaseModel):
     image_url: Optional[str] = None
     created_at: str
     score_earned: int
-# ▲▲▲ [추가] 장소별 리뷰 조회를 위한 Pydantic 모델 추가 ▲▲▲
 
-# 🔥 [추가] 공유 기록을 위한 Pydantic 모델
 class ShareRecordRequest(BaseModel):
     user_id: str
     review_id: str
@@ -183,66 +300,116 @@ class ShareRecordRequest(BaseModel):
 
 # --- 이하 API 엔드포인트 ---
 
+@app.post("/admin_login/")
+async def admin_login(admin_data: AdminLogin):
+    """
+    어드민 계정으로 로그인하는 API
+    """
+    try:
+        # 어드민 계정 정보 확인
+        if (admin_data.username == ADMIN_USERNAME and 
+            admin_data.password == ADMIN_PASSWORD):
+            
+            users_ref = db.collection(USERS_COLLECTION)
+            admin_user_ref = users_ref.document(ADMIN_USER_ID)
+            admin_user_doc = admin_user_ref.get()
+            
+            # 어드민 계정이 없으면 생성
+            if not admin_user_doc.exists:
+                create_user_in_db(
+                    user_id=ADMIN_USER_ID,
+                    username=ADMIN_USERNAME,
+                    is_admin=True
+                )
+                print(f"어드민 계정 생성: {ADMIN_USER_ID}")
+            
+            return {
+                "user_id": ADMIN_USER_ID,
+                "username": ADMIN_USERNAME,
+                "is_admin": True,
+                "message": "어드민 로그인 성공"
+            }
+        else:
+            raise HTTPException(status_code=401, detail="잘못된 어드민 계정 정보")
+            
+    except Exception as e:
+        print(f"ERROR: 어드민 로그인 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/guest_login/")
+async def guest_login():
+    """
+    게스트 로그인 API - 매번 새로운 게스트 계정 생성
+    """
+    try:
+        # 현재 시간을 기반으로 고유한 게스트 ID 생성
+        current_time = datetime.now()
+        guest_id = f"guest-{current_time.strftime('%Y%m%d%H%M%S')}"
+        # 밀리초까지 포함하여 중복 방지 (밀리초를 2자리로 변환)
+        guest_username = f"게스트-{current_time.strftime('%m%d%H%M%S')}{current_time.microsecond//10000:02d}"
+        
+        # 새로운 게스트 계정 생성
+        create_user_in_db(
+            user_id=guest_id,
+            username=guest_username,
+            is_guest=True
+        )
+        
+        print(f"새 게스트 계정 생성: {guest_id} ({guest_username})")
+        
+        return {
+            "user_id": guest_id,
+            "username": guest_username,
+            "is_guest": True,
+            "message": "게스트 계정이 생성되었습니다."
+        }
+        
+    except Exception as e:
+        print(f"ERROR: 게스트 로그인 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/create_user/")
 async def create_user(user_data: UserCreate):
-    TEST_GUEST_USERNAME = "게스트유저"
-    TEST_GUEST_USER_ID = "guest-test-user-001"
-
+    """
+    카카오 로그인용 사용자 생성 API
+    """
     try:
         users_ref = db.collection(USERS_COLLECTION)
-
-        if user_data.username == TEST_GUEST_USERNAME:
-            guest_user_ref = users_ref.document(TEST_GUEST_USER_ID)
-            guest_user_doc = guest_user_ref.get()
-
-            if not guest_user_doc.exists:
-                guest_user_ref.set({
-                    'user_id': TEST_GUEST_USER_ID,
-                    'username': TEST_GUEST_USERNAME,
-                    'total_score': 0,
-                    'profile_image_url': '',
-                    'created_at': firestore.SERVER_TIMESTAMP
-                })
-                print(f"테스트 게스트 사용자 생성: {TEST_GUEST_USER_ID}")
-
-            return {
-                "user_id": TEST_GUEST_USER_ID,
-                "username": TEST_GUEST_USERNAME,
-                "message": "게스트 사용자를 성공적으로 조회했습니다."
-            }
-
+        
+        # 기존 사용자 검색
         query = users_ref.where('username', '==', user_data.username).limit(1).get()
-
+        
         user_list = list(query)
         if user_list:
             existing_user_doc = user_list[0]
             existing_user_data = existing_user_doc.to_dict()
-
+            
+            # 프로필 이미지 업데이트
             if user_data.profile_image_url:
                 existing_user_doc.reference.update({
                     'profile_image_url': user_data.profile_image_url
                 })
                 print(f"기존 사용자 ({existing_user_data['user_id']}) 프로필 이미지 업데이트 완료")
-
+            
             print(f"기존 사용자 발견: {existing_user_data['user_id']}")
             return {
                 "user_id": existing_user_data['user_id'],
                 "username": existing_user_data['username'],
                 "message": "기존 사용자를 성공적으로 조회했습니다."
             }
-
+        
+        # 새 사용자 생성
         user_id = str(uuid.uuid4())
-        user_ref = users_ref.document(user_id)
-
-        user_ref.set({
-            'user_id': user_id,
-            'username': user_data.username,
-            'total_score': 0,
-            'profile_image_url': user_data.profile_image_url or '',
-            'created_at': firestore.SERVER_TIMESTAMP
-        })
-
+        create_user_in_db(
+            user_id=user_id,
+            username=user_data.username,
+            profile_image_url=user_data.profile_image_url or ""
+        )
+        
         return {"user_id": user_id, "username": user_data.username, "message": "사용자가 생성되었습니다."}
+        
     except Exception as e:
         print(f"ERROR: 사용자 생성 중 오류 발생: {e}")
         traceback.print_exc()
@@ -309,9 +476,8 @@ async def predict_location(
             user_lon=longitude
         )
 
-        os.remove(temp_image_path)
-
         if results is None:
+            os.remove(temp_image_path)
             return PredictionResponse(predictions=[], score_earned=0, is_correct=False, message="예측에 실패했습니다.")
 
         best_prediction = results[0]
@@ -320,6 +486,34 @@ async def predict_location(
 
         is_correct = predicted_place == target_place
         score_earned = 10 if is_correct else 0
+
+        # 정답을 맞힌 경우에만 이미지를 Firebase Storage에 저장
+        image_url = None
+        if is_correct:
+            print(f"🎉 정답입니다! 이미지 저장을 시작합니다...")
+            # 세션에서 사용자 ID 가져오기
+            session_ref = db.collection(GAME_SESSIONS_COLLECTION).document(session_id)
+            session = session_ref.get()
+            if session.exists:
+                user_id = session.to_dict()['user_id']
+                # 방문 ID 생성 (트랜잭션에서 사용할 예정)
+                visit_id = str(uuid.uuid4())
+                print(f"   사용자 ID: {user_id}")
+                print(f"   방문 ID: {visit_id}")
+                print(f"   장소: {target_place}")
+                print(f"   임시 파일: {temp_image_path}")
+                
+                # 이미지를 Firebase Storage에 저장
+                image_url = save_image_to_storage(temp_image_path, user_id, target_place, visit_id)
+                if image_url is None:
+                    print("⚠️ 이미지 저장 실패했지만 게임은 계속 진행됩니다")
+                else:
+                    print(f"✅ 이미지 저장 성공: {image_url}")
+        else:
+            print(f"❌ 틀렸습니다. 이미지 저장하지 않습니다.")
+
+        # 임시 파일 삭제
+        os.remove(temp_image_path)
 
         transaction = db.transaction()
 
@@ -346,7 +540,8 @@ async def predict_location(
 
             visit_id = str(uuid.uuid4())
             visit_ref = db.collection(VISITS_COLLECTION).document(visit_id)
-            transaction.set(visit_ref, {
+            
+            visit_data = {
                 'visit_id': visit_id,
                 'session_id': session_id,
                 'user_id': user_id,
@@ -358,7 +553,13 @@ async def predict_location(
                 'latitude': latitude,
                 'longitude': longitude,
                 'visit_time': firestore.SERVER_TIMESTAMP
-            })
+            }
+            
+            # 정답을 맞힌 경우에만 이미지 URL 추가
+            if is_correct and image_url:
+                visit_data['image_url'] = image_url
+            
+            transaction.set(visit_ref, visit_data)
             return new_session_score, new_total_score
 
         session_ref = db.collection(GAME_SESSIONS_COLLECTION).document(session_id)
@@ -454,13 +655,19 @@ async def get_user_profile(user_id: str):
         visit_history = []
         for visit in visits:
             visit_data = visit.to_dict()
-            visit_history.append({
+            visit_info = {
                 "target_place": visit_data['target_place'],
                 "predicted_place": visit_data['predicted_place'],
                 "is_correct": visit_data['is_correct'],
                 "score_earned": visit_data['score_earned'],
                 "visit_time": visit_data['visit_time']
-            })
+            }
+            
+            # 정답을 맞힌 경우에만 이미지 URL 추가
+            if visit_data['is_correct'] and visit_data.get('image_url'):
+                visit_info['image_url'] = visit_data['image_url']
+            
+            visit_history.append(visit_info)
 
         return UserProfileResponse(
             user_id=user_id,
@@ -930,6 +1137,99 @@ async def record_share(request: ShareRecordRequest):
         print(f"ERROR: 공유 기록 중 오류 발생: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"공유 기록 중 서버 오류 발생: {e}")
+
+# ▼▼▼ [신규] 사용자 성공 이미지 조회 API 엔드포인트 추가 ▼▼▼
+@app.get("/success_images/{user_id}")
+async def get_user_success_images_endpoint(user_id: str):
+    """
+    특정 사용자의 모든 성공 이미지를 조회합니다.
+    - 정답을 맞힌 방문 기록의 이미지만 반환
+    - 방문 시간 기준 내림차순 정렬
+    """
+    try:
+        # Firebase 연결 확인
+        if not db:
+            raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
+        
+        # 사용자 존재 확인
+        user_ref = db.collection(USERS_COLLECTION).document(user_id)
+        user_doc = user_ref.get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        
+        # 성공 이미지 조회
+        success_images = get_user_success_images(user_id)
+        
+        return {
+            "user_id": user_id,
+            "success_images": success_images,
+            "total_count": len(success_images),
+            "message": f"성공 이미지 {len(success_images)}개를 조회했습니다."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR: 성공 이미지 조회 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ▼▼▼ [신규] 사용자 성공 이미지 통계 조회 API 엔드포인트 추가 ▼▼▼
+@app.get("/success_images/{user_id}/stats")
+async def get_user_success_images_stats(user_id: str):
+    """
+    특정 사용자의 성공 이미지 통계를 조회합니다.
+    - 총 성공 횟수, 장소별 성공 횟수 등
+    """
+    try:
+        # Firebase 연결 확인
+        if not db:
+            raise HTTPException(status_code=500, detail="데이터베이스 연결 실패")
+        
+        # 사용자 존재 확인
+        user_ref = db.collection(USERS_COLLECTION).document(user_id)
+        user_doc = user_ref.get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        
+        # 성공 이미지 조회
+        success_images = get_user_success_images(user_id)
+        
+        # 통계 계산
+        total_success = len(success_images)
+        place_stats = {}
+        total_score = 0
+        
+        for image in success_images:
+            place_name = image['place_name']
+            if place_name not in place_stats:
+                place_stats[place_name] = 0
+            place_stats[place_name] += 1
+            total_score += image.get('score_earned', 0)
+        
+        # 장소별 성공 횟수 정렬 (내림차순)
+        sorted_places = sorted(place_stats.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            "user_id": user_id,
+            "total_success_count": total_success,
+            "total_score_earned": total_score,
+            "place_stats": [{"place_name": place, "success_count": count} for place, count in sorted_places],
+            "message": f"성공 이미지 통계를 조회했습니다."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR: 성공 이미지 통계 조회 중 오류 발생: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+# ▲▲▲ [신규] 사용자 성공 이미지 통계 조회 API 엔드포인트 추가 ▲▲▲
+
+@app.get("/health")
+async def health_check():
+    """헬스체크 엔드포인트"""
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 # 서버 시작
 if __name__ == "__main__":

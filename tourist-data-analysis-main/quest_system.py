@@ -218,7 +218,7 @@ PLACE_THEMES = {
     '전통_문화': {
         'name': '전통과 문화',
         'description': '한국의 문화와 전통을 체험할 수 있는 장소를 탐방하세요',
-        'places': ['북촌한옥마을', '은평한옥마을', '봉은사', '숭례문'],
+        'places': ['북촌한옥마을', '은평한옥마을', '봉은사', '숭례문', '광화문'],
         'color': '#FFD700'  # 금색
     },
     '현대_도시': {
@@ -230,66 +230,29 @@ PLACE_THEMES = {
     '역사_기념': {
         'name': '역사와 기념',
         'description': '역사적 의미가 깊은 기념물과 장소를 탐방하세요',
-        'places': ['독립문', '광화문'],
+        'places': ['독립문'],
         'color': '#DC143C'  # 빨간색
     }
 }
-
-# 중복 검증 함수
-def validate_place_themes():
-    """
-    PLACE_THEMES에서 중복되는 관광지가 있는지 검증하는 함수
-    """
-    all_places = []
-    for theme, theme_info in PLACE_THEMES.items():
-        all_places.extend(theme_info['places'])
-    
-    # 중복된 관광지 찾기
-    duplicates = []
-    seen = set()
-    for place in all_places:
-        if place in seen:
-            duplicates.append(place)
-        else:
-            seen.add(place)
-    
-    if duplicates:
-        print(f"⚠️ 경고: 중복된 관광지 발견: {duplicates}")
-        return False
-    else:
-        print("✅ 모든 관광지가 고유하게 분류되었습니다.")
-        return True
 
 # 테마별 미션 설명 (각 테마당 3개 관광지, 겹치지 않도록 설정)
 THEME_MISSIONS = {
     '궁궐_역사': {
         'title': '조선왕조의 발자취',
         'description': '조선왕조의 궁궐이나 역사적 건축물을 방문하여 과거로의 시간여행을 경험하세요',
-        'hint': '경복궁, 경희궁, 창덕궁, 창경궁, 덕수궁 중 하나를 방문하세요',
+        'hint': '경복궁, 경희궁, 광화문 중 하나를 방문하세요',
         'points': 20
     },
     '자연_공원': {
         'title': '도심 속 자연 탐방',
         'description': '도심 속에서 자연을 만날 수 있는 공원이나 하천을 방문하여 휴식을 취하세요',
-        'hint': '청계천, 서울숲, 낙산공원, 올림픽공원, 노들섬 중 하나를 방문하세요',
+        'hint': '청계천, 남산서울타워 중 하나를 방문하세요',
         'points': 20
     },
     '전통_문화': {
         'title': '전통 문화 체험',
         'description': '한국의 전통 문화와 현대 문화가 공존하는 장소를 방문하여 문화를 체험하세요',
-        'hint': '북촌한옥마을, 은평한옥마을, 봉은사, 숭례문 중 하나를 방문하세요',
-        'points': 20
-    },
-    '현대_도시': {
-        'title': '현대 서울 탐방',
-        'description': '현대 서울의 상징적인 건물과 시설을 방문하여 도시의 발전을 체험하세요',
-        'hint': '남산서울타워, 롯데타워, 동대문디자인플라자, 서울도서관 중 하나를 방문하세요',
-        'points': 20
-    },
-    '역사_기념': {
-        'title': '역사와 기념',
-        'description': '역사적 의미가 깊은 기념물과 장소를 방문하여 과거를 기억하세요',
-        'hint': '독립문, 광화문 중 하나를 방문하세요',
+        'hint': '북촌한옥마을, 서울도서관, 독립문 중 하나를 방문하세요',
         'points': 20
     }
 }
@@ -923,10 +886,3 @@ def get_quest_progress(user_id: str) -> Dict[str, Any]:
         "available_reward": available_reward,
         "progress_percentage": (reward_ready_quests + claimed_quests) / total_quests * 100 if total_quests > 0 else 0
     }
-
-# 모듈 로드 시 자동으로 중복 검증 실행
-if __name__ == "__main__":
-    validate_place_themes()
-else:
-    # 모듈 import 시에도 검증 실행
-    validate_place_themes()

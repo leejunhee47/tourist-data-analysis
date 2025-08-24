@@ -8,9 +8,19 @@ import numpy as np
 from math import radians, sin, cos, sqrt, atan2
 
 class CLIPLoRAInference:
-    def __init__(self, model_path="saved_models/20_places_new_best_model.pth"):
+    def __init__(self, model_path="fine_tuned_model/20_places_new_best_model.pth"):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"🚀 장치: {self.device}")
+        print(f"💾 모델 경로: {model_path}")
+        
+        # 모델 파일 존재 확인
+        if not os.path.exists(model_path):
+            print(f"❌ 모델 파일이 없습니다: {model_path}")
+            print(f"📁 현재 디렉토리: {os.getcwd()}")
+            print(f"📁 디렉토리 내용: {os.listdir('.')}")
+            if os.path.exists('fine_tuned_model'):
+                print(f"📁 fine_tuned_model 내용: {os.listdir('fine_tuned_model')}")
+            raise FileNotFoundError(f"❌ 모델 파일을 찾을 수 없습니다: {model_path}")
         
         # CLIP 모델 로드 (float32로)
         self.clip_model, self.preprocess = clip.load("ViT-B/32", device=self.device)
