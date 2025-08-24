@@ -448,15 +448,18 @@
           const filterStyle = isVisited ? "" : "filter: grayscale(100%);";
           const initialBorderColor = isVisited ? "#2b92ec" : "#fff";
 
+          const size = 35;
+
           const content = `
             <div id="photo-overlay-${contentId}" class="photo-overlay" 
                  data-visited="${isVisited}"
-                 style="width:50px; height:50px; border-radius:50%; border:3px solid ${initialBorderColor}; box-shadow:0 2px 6px rgba(0,0,0,0.4); cursor:pointer; transition:all 0.2s ease; overflow:hidden; -webkit-tap-highlight-color:transparent; touch-action:manipulation;"
+                 style="width:${size}px; height:${size}px; border-radius:50%; border:3px solid ${initialBorderColor}; box-shadow:0 2px 6px rgba(0,0,0,0.4); cursor:pointer; transition:all 0.2s ease; overflow:hidden; -webkit-tap-highlight-color:transparent; touch-action:manipulation;"
                  onclick="handlePhotoClick('${contentId}', '${title}', ${lat}, ${lng});"
                  ontouchstart="this.style.transform='scale(0.95)'"
                  ontouchend="this.style.transform='scale(1)'">
               <div class="photo-image-inner" style="width:100%; height:100%; background-image:url('${imageUrl}'); background-size:cover; background-position:center; ${filterStyle} transition:filter 0.5s ease; pointer-events:none;"></div>
             </div>`;
+          // ▲▲▲ [수정] 여기까지 ▲▲▲
 
           const photoOverlay = new kakao.maps.CustomOverlay({
             position: markerPosition,
