@@ -1853,10 +1853,12 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                   icon: Icon(isVisitedToday
                                       ? Icons.check_circle_outline
                                       : Icons.flag_outlined),
-                                  label: Text(isVisitedToday
+                                  // [수정] 관리자일 경우 '오늘 인증 완료' 대신 '미션 시작' 텍스트가 보이도록 변경
+                                  label: Text((isVisitedToday && !_isAdmin)
                                       ? '오늘 인증 완료'
                                       : '이 장소로 미션 시작'),
-                                  onPressed: isVisitedToday
+                                  // [수정] 관리자일 경우 isVisitedToday가 true여도 버튼이 활성화되도록 변경
+                                  onPressed: (isVisitedToday && !_isAdmin)
                                       ? null
                                       : () {
                                           Navigator.of(context).pop();
@@ -2751,6 +2753,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
   // ▼▼▼ [수정] 카카오톡 공유 기능 (앱 복귀 감지 로직 적용) ▼▼▼
   Future<void> _shareReviewViaKakao(Review review) async {
+    // 공유할 이미지가 없는 경우 사용자에게 알림
     if (review.imageUrl == null || review.imageUrl!.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2761,35 +2764,45 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
 
     try {
-      // [수정] 1. URL로 이미지를 업로드하기 위해 uploadImage 대신 scrapImage 사용
+      // 1. 카카오 서버에 이미지를 업로드하고 URL을 받습니다.
       final imageUploadResult =
           await ShareClient.instance.scrapImage(imageUrl: review.imageUrl!);
       final kakaoImageUrl = imageUploadResult.infos.original.url;
 
-      // 2. 카카오 공유 템플릿 생성
+      // 2. [사진 보기 기능] 이미지와 하단 탭을 위한 링크
+      final imageLink = Link(
+        webUrl: Uri.parse(review.imageUrl!),
+        mobileWebUrl: Uri.parse(review.imageUrl!),
+      );
+
+      // 3. [자세히 보기 기능] '자세히 보기' 버튼을 위한 구글 검색 링크 생성
+      final encodedPlaceName = Uri.encodeComponent(review.placeName);
+      final googleSearchUrl =
+          'https://www.google.com/search?q=$encodedPlaceName';
+      final googleSearchLink = Link(
+        webUrl: Uri.parse(googleSearchUrl),
+        mobileWebUrl: Uri.parse(googleSearchUrl),
+      );
+
+      // 4. 요구사항에 맞게 최종 템플릿을 구성합니다.
       final FeedTemplate template = FeedTemplate(
         content: Content(
           title: '나만의 서울 여행',
           description: '장소: ${review.placeName}',
-
-          // [수정] 3. String을 Uri 객체로 변환하여 전달
           imageUrl: Uri.parse(kakaoImageUrl),
-          link: Link(
-            webUrl: Uri.parse(review.imageUrl!),
-            mobileWebUrl: Uri.parse(review.imageUrl!),
-          ),
+          // 사진과 하단 탭은 이미지 링크를 따라갑니다.
+          link: imageLink,
         ),
         buttons: [
           Button(
-            title: '자세히 보기',
-            link: Link(
-              webUrl: Uri.parse('https://www.google.com'),
-              mobileWebUrl: Uri.parse('https://www.google.com'),
-            ),
+            title: '관광지 자세히 보기',
+            // '자세히 보기' 버튼은 구글 검색 링크로 설정합니다.
+            link: googleSearchLink,
           )
         ],
       );
-      // 3. 카카오톡으로 공유 실행
+
+      // 5. 카카오톡으로 공유 실행 (이하 로직은 동일)
       bool isKakaoTalkSharingAvailable =
           await ShareClient.instance.isKakaoTalkSharingAvailable();
       if (isKakaoTalkSharingAvailable) {
