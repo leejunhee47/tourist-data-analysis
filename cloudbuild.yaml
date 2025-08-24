@@ -5,7 +5,7 @@ steps:
 
 # Pre-step 2: Cloud Build 서비스 계정 권한으로 GCS에서 모델 파일 다운로드
 - name: 'gcr.io/cloud-builders/gsutil'
-  args: ['cp', 'gs://tourapi-77ca1-models/new_best_model.pth', 'tourist-data-analysis-main/fine_tuned_model/']
+  args: ['cp', 'gs://tourapi-77ca1-models/20_places_new_best_model.pth', 'tourist-data-analysis-main/fine_tuned_model/']
 
 # 1. Docker 이미지 빌드
 # -t 플래그: 이미지에 이름과 태그를 지정합니다. 
@@ -47,11 +47,15 @@ steps:
     - '--cpu'
     - '2'
     - '--timeout'
-    - '300'
+    - '600'  # 10분으로 증가
     - '--max-instances'
     - '5'
     - '--min-instances'
-    - '0'
+    - '1'
+    #- '--cpu-boost'  # 시작 시 CPU 부스트 활성화
+    - '--execution-environment'
+    # - 'gen1'
+    - 'gen2'  # 2세대 실행 환경 사용
 
 # 배포 후 Artifact Registry에 저장될 이미지 정보
 images:
