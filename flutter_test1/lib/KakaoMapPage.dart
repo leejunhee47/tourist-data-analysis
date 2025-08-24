@@ -1,5 +1,6 @@
 // lib/KakaoMapPage.dart
 
+// ... (imports remain the same)
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:convert';
@@ -17,7 +18,7 @@ import 'PhotoItem.dart';
 import 'game_data_model.dart';
 import 'quest_model.dart';
 import 'review_model.dart';
-import 'config/server_config.dart';
+import 'config.dart';
 
 class KakaoMapPage extends StatefulWidget {
   final GameData gameData;
@@ -27,7 +28,6 @@ class KakaoMapPage extends StatefulWidget {
   State<KakaoMapPage> createState() => _KakaoMapPageState();
 }
 
-// 🔥 WidgetsBindingObserver를 구현하여 앱 생명주기 감지
 class _KakaoMapPageState extends State<KakaoMapPage>
     with WidgetsBindingObserver {
   // --- Map and Core State ---
@@ -41,14 +41,16 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   File? _lastMissionImage;
   Map<String, String> _localImageUrls = {};
 
-  // --- Data State (초기화 방식 변경) ---
+  // --- Data State ---
   late String _userId;
+  late String _username; // [추가] 사용자 이름 상태 변수
   late String? _sessionId;
   late User? _currentUser;
   late bool _isGuest;
+  late bool _isAdmin;
   late List<PhotoItem> _touristSpotPhotos;
   late List<PhotoItem> _allSeoulPhotos;
-  late List<PhotoItem> _keywordSearchedPhotos; // [추가]
+  late List<PhotoItem> _keywordSearchedPhotos;
   late Map<String, Map<String, double>> _placeCoords;
   late List<Map<String, dynamic>> _rankings;
   late int _totalScore;
@@ -56,16 +58,11 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   late List<Quest> _quests;
   late QuestProgress? _questProgress;
 
-  // --- UI State for FAB Menu ---
   bool _isMenuOpen = false;
   final Duration _menuAnimationDuration = const Duration(milliseconds: 250);
 
-  // 🔥 공유 진행 상태를 추적하기 위한 변수
   bool _isSharingInProgress = false;
   Review? _reviewBeingShared;
-
-  // --- Constants ---
-  // 서버 URL은 ServerConfig에서 동적으로 가져옴 (디버그/릴리즈 모드에 따라 다름)
   final List<String> targetKeywords = [
     '경복궁',
     '경희궁',
@@ -96,20 +93,21 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     _fetchLocalImageUrls();
     _initializeWebView();
     _selectedTestPlace = targetKeywords.isNotEmpty ? targetKeywords[0] : null;
-
-    // 🔥 앱 생명주기 감지기 등록
     WidgetsBinding.instance.addObserver(this);
   }
 
+  // --- [수정] _initializeStateFromGameData: username 초기화 추가 ---
   void _initializeStateFromGameData() {
     final gameData = widget.gameData;
     _userId = gameData.userId;
+    _username = gameData.username; // 사용자 이름 초기화
     _sessionId = gameData.sessionId;
     _currentUser = gameData.currentUser;
     _isGuest = gameData.isGuest;
+    _isAdmin = gameData.isAdmin;
     _touristSpotPhotos = gameData.touristSpotPhotos;
     _allSeoulPhotos = gameData.allSeoulPhotos;
-    _keywordSearchedPhotos = gameData.keywordSearchedPhotos; // [추가]
+    _keywordSearchedPhotos = gameData.keywordSearchedPhotos;
     _placeCoords = gameData.placeCoords;
     _rankings = gameData.rankings;
     _totalScore = gameData.totalScore;
@@ -117,6 +115,10 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     _quests = gameData.quests;
     _questProgress = gameData.questProgress;
   }
+
+  // ... (dispose, didChangeAppLifecycleState, and other methods remain the same)
+  // No other changes are needed in the functions below for this specific request.
+  // The rest of the file remains the same until the build method.
 
   @override
   void dispose() {
@@ -174,7 +176,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
   Future<void> _endGameSession() async {
     try {
-      await http.post(Uri.parse('${ServerConfig.serverUrl}/end_game/$_sessionId'));
+      await http.post(Uri.parse('$serverUrl/end_game/$_sessionId'));
     } catch (e) {
       print('Game session end error: $e');
     }
@@ -221,7 +223,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   Future<void> _fetchUserProfile() async {
     try {
       final response =
-          await http.get(Uri.parse('${ServerConfig.serverUrl}/user_profile/$_userId'));
+          await http.get(Uri.parse('$serverUrl/user_profile/$_userId'));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (mounted) {
@@ -238,7 +240,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
   Future<void> _fetchRankings() async {
     try {
-      final response = await http.get(Uri.parse('${ServerConfig.serverUrl}/rankings/'));
+      final response = await http.get(Uri.parse('$serverUrl/rankings/'));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (mounted) {
@@ -255,9 +257,9 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   Future<void> _fetchQuestsAndProgress() async {
     try {
       final questsResponse =
-          await http.get(Uri.parse('${ServerConfig.serverUrl}/quests/$_userId'));
+          await http.get(Uri.parse('$serverUrl/quests/$_userId'));
       final progressResponse =
-          await http.get(Uri.parse('${ServerConfig.serverUrl}/quests/$_userId/progress'));
+          await http.get(Uri.parse('$serverUrl/quests/$_userId/progress'));
       if (questsResponse.statusCode == 200 &&
           progressResponse.statusCode == 200) {
         final questsData = json.decode(utf8.decode(questsResponse.bodyBytes));
@@ -265,16 +267,9 @@ class _KakaoMapPageState extends State<KakaoMapPage>
             json.decode(utf8.decode(progressResponse.bodyBytes));
         if (mounted) {
           setState(() {
-            // 퀘스트 데이터를 안전하게 변환
-            try {
-              _quests = (questsData['quests'] as List)
-                  .map((q) => Quest.fromJson(q))
-                  .toList();
-            } catch (e) {
-              print('퀘스트 데이터 변환 오류: $e');
-              print('서버 응답 데이터: $questsData');
-              _quests = [];
-            }
+            _quests = (questsData['quests'] as List)
+                .map((q) => Quest.fromJson(q))
+                .toList();
             _questProgress = QuestProgress.fromJson(progressData['progress']);
           });
         }
@@ -332,7 +327,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   Future<void> _fetchLocalImageUrls() async {
     try {
       final response =
-          await http.get(Uri.parse('${ServerConfig.serverUrl}/places/local-images'));
+          await http.get(Uri.parse('$serverUrl/places/local-images'));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (mounted) {
@@ -349,7 +344,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   Future<void> _displayTouristPhotos() async {
     if (_touristSpotPhotos.isEmpty || !isMapLoaded) return;
     // 서버 주소 (URL 조합을 위해)
-    final String serverBaseUrl = ServerConfig.serverUrl;
+    const String serverBaseUrl = serverUrl;
     for (final photo in _touristSpotPhotos) {
       String? matchedPlace;
       for (final placeName in _placeCoords.keys) {
@@ -396,9 +391,10 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
         // 2. localImagePath가 null이 아니면(로컬 이미지가 있으면) 해당 경로를 사용하고,
         //    null이면(로컬 이미지가 없으면) 관광사진 API의 이미지(photo.galWebImageUrl)를 사용합니다.
-        final String imageUrl = localImagePath != null
-            ? '$serverBaseUrl$localImagePath'
-            : photo.galWebImageUrl;
+        final String imageUrl = photo.base64Thumbnail ??
+            (localImagePath != null
+                ? '$serverBaseUrl$localImagePath'
+                : photo.galWebImageUrl);
 
         final String title = canonicalPlaceName; // 표준 키워드로 제목 설정
 
@@ -509,7 +505,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
     try {
       var request =
-          http.MultipartRequest('POST', Uri.parse('${ServerConfig.serverUrl}/predict/'))
+          http.MultipartRequest('POST', Uri.parse('$serverUrl/predict/'))
             ..fields['session_id'] = _sessionId!
             ..fields['target_place'] = targetPlace
             ..fields['latitude'] = currentPosition!.latitude.toString()
@@ -704,14 +700,15 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                 _getImage(ImageSource.camera);
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('앨범에서 선택'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _getImage(ImageSource.gallery);
-              },
-            ),
+            if (_isAdmin)
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('앨범에서 선택'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _getImage(ImageSource.gallery);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.close),
               title: const Text('취소'),
@@ -1447,7 +1444,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                         _localImageUrls[matchedPlace];
                                     if (localImagePath != null) {
                                       finalImageUrl =
-                                          '${ServerConfig.serverUrl}$localImagePath';
+                                          '$serverUrl$localImagePath';
                                     }
                                   }
                                 }
@@ -1555,7 +1552,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     try {
       final encodedPlaceName = Uri.encodeComponent(placeName);
       final response = await http
-          .get(Uri.parse('${ServerConfig.serverUrl}/reviews/place/$encodedPlaceName'));
+          .get(Uri.parse('$serverUrl/reviews/place/$encodedPlaceName'));
       if (response.statusCode == 200) {
         final List<dynamic> reviewList =
             json.decode(utf8.decode(response.bodyBytes));
@@ -1584,7 +1581,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     try {
       final encodedPlaceName = Uri.encodeComponent(placeName);
       final response = await http.get(Uri.parse(
-          '${ServerConfig.serverUrl}/reviews/user/$_userId/place/$encodedPlaceName'));
+          '$serverUrl/reviews/user/$_userId/place/$encodedPlaceName'));
       if (response.statusCode == 200) {
         final List<dynamic> reviewList =
             json.decode(utf8.decode(response.bodyBytes));
@@ -1755,23 +1752,38 @@ class _KakaoMapPageState extends State<KakaoMapPage>
       }
     }
 
-    final bool isVisited = _visitHistory.any(
-      (visit) =>
-          visit['target_place'] == matchedPlace &&
-          (visit['is_correct'] == true || visit['is_correct'] == 1),
-    );
+    final now = DateTime.now();
+    final bool isVisitedToday = _visitHistory.any((visit) {
+      if (visit['target_place'] != matchedPlace ||
+          (visit['is_correct'] != true && visit['is_correct'] != 1)) {
+        return false;
+      }
+      try {
+        final visitTimeStr = visit['visit_time'];
+        if (visitTimeStr is String) {
+          final visitDate = DateTime.parse(visitTimeStr).toLocal();
+          return visitDate.year == now.year &&
+              visitDate.month == now.month &&
+              visitDate.day == now.day;
+        }
+        return false;
+      } catch (e) {
+        print("방문 시간 파싱 오류: ${visit['visit_time']}. 오류: $e");
+        return false;
+      }
+    });
 
+    // --- ▼▼▼ [수정] 이미지 URL 결정 로직을 _displayTouristPhotos와 동일하게 변경 ▼▼▼ ---
     final String? localImagePath =
         matchedPlace.isNotEmpty ? _localImageUrls[matchedPlace] : null;
-    final String finalImageUrl = localImagePath != null
-                    ? '${ServerConfig.serverUrl}$localImagePath'
-        : photo.galWebImageUrl;
+    final String finalImageUrl = photo.base64Thumbnail ??
+        (localImagePath != null
+            ? '$serverUrl$localImagePath'
+            : photo.galWebImageUrl);
+    // --- ▲▲▲ 수정 완료 ▲▲▲ ---
 
-    // --- [수정 시작] 제목 결정 로직 수정 ---
-    // 미션 관광지인 경우(matchedPlace가 비어있지 않음), 항상 표준 키워드를 제목으로 사용합니다.
     final String finalTitle =
         matchedPlace.isNotEmpty ? matchedPlace : photo.galTitle;
-    // --- [수정 종료] ---
 
     showDialog(
       context: context,
@@ -1784,7 +1796,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
               shape: const RoundedRectangleBorder(
                   borderRadius:
                       BorderRadius.vertical(top: Radius.circular(12))),
-              title: Text(finalTitle, // 수정된 제목(finalTitle) 사용
+              title: Text(finalTitle,
                   style: const TextStyle(
                       fontSize: 18, fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis),
@@ -1805,8 +1817,13 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                       constraints: BoxConstraints(
                         maxHeight: MediaQuery.of(context).size.height * 0.4,
                       ),
+                      // [중요] 상세 정보 창에서는 Base64 이미지를 직접 표시할 수 없으므로,
+                      // 썸네일이 아닌 원본 이미지 URL(galWebImageUrl)을 사용하도록 유지합니다.
+                      // 단, 로컬 이미지가 있는 경우는 그것을 우선합니다.
                       child: Image.network(
-                        finalImageUrl,
+                        localImagePath != null
+                            ? '$serverUrl$localImagePath'
+                            : photo.galWebImageUrl,
                         fit: BoxFit.contain,
                         errorBuilder: (c, e, s) => Container(
                           height: 200,
@@ -1822,7 +1839,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Title: $finalTitle', // 수정된 제목(finalTitle) 사용
+                          Text('Title: $finalTitle',
                               style: const TextStyle(
                                   fontWeight: FontWeight.bold, fontSize: 16)),
                           const SizedBox(height: 8),
@@ -1833,43 +1850,51 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 ElevatedButton.icon(
-                                  icon: Icon(isVisited
-                                      ? Icons.check_circle
+                                  icon: Icon(isVisitedToday
+                                      ? Icons.check_circle_outline
                                       : Icons.flag_outlined),
-                                  label: Text(
-                                      isVisited ? '다시 인증하기' : '이 장소로 미션 시작'),
-                                  onPressed: () {
-                                    Navigator.of(context).pop();
-                                    Future.delayed(
-                                        const Duration(milliseconds: 100), () {
-                                      if (mounted) {
-                                        setState(() {
-                                          _currentTargetPlace = matchedPlace;
-                                        });
-                                        final coords =
-                                            _placeCoords[matchedPlace];
-                                        if (coords != null) {
-                                          _controller
-                                              .runJavaScript(
-                                                  "showMissionTextOnMarker(${coords['lat']}, ${coords['lng']}, '$matchedPlace')")
-                                              .catchError((e) {
-                                            print(
-                                                "JS showMissionTextOnMarker 호출 오류: $e");
+                                  label: Text(isVisitedToday
+                                      ? '오늘 인증 완료'
+                                      : '이 장소로 미션 시작'),
+                                  onPressed: isVisitedToday
+                                      ? null
+                                      : () {
+                                          Navigator.of(context).pop();
+                                          Future.delayed(
+                                              const Duration(milliseconds: 100),
+                                              () {
+                                            if (mounted) {
+                                              setState(() {
+                                                _currentTargetPlace =
+                                                    matchedPlace;
+                                              });
+                                              final coords =
+                                                  _placeCoords[matchedPlace];
+                                              if (coords != null) {
+                                                _controller
+                                                    .runJavaScript(
+                                                        "showMissionTextOnMarker(${coords['lat']}, ${coords['lng']}, '$matchedPlace')")
+                                                    .catchError((e) {
+                                                  print(
+                                                      "JS showMissionTextOnMarker 호출 오류: $e");
+                                                });
+                                              }
+                                              _controller
+                                                  .runJavaScript(
+                                                      "highlightMarker('${photo.galContentId}')")
+                                                  .catchError((e) {
+                                                print(
+                                                    "JS highlightMarker 호출 오류: $e");
+                                              });
+                                              _pickImage();
+                                            }
                                           });
-                                        }
-                                        _controller
-                                            .runJavaScript(
-                                                "highlightMarker('${photo.galContentId}')")
-                                            .catchError((e) {
-                                          print("JS highlightMarker 호출 오류: $e");
-                                        });
-                                        _pickImage();
-                                      }
-                                    });
-                                  },
+                                        },
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.blue[400],
                                     foregroundColor: Colors.white,
+                                    disabledBackgroundColor: Colors.grey[300],
+                                    disabledForegroundColor: Colors.grey[600],
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 20, vertical: 12),
                                     textStyle: const TextStyle(fontSize: 16),
@@ -1878,12 +1903,10 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                   ),
                                 ),
                                 const SizedBox(height: 16),
-                                // 심플한 리뷰 버튼들 - 세로 배치
                                 Column(
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
                                   children: [
-                                    // 모든 리뷰 보기 버튼
                                     Container(
                                       decoration: BoxDecoration(
                                         color: Colors.white,
@@ -1932,13 +1955,12 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                       ),
                                     ),
                                     const SizedBox(height: 10),
-                                    // 나의 리뷰 보기 버튼
                                     Container(
                                       decoration: BoxDecoration(
                                         color: Colors.white,
                                         borderRadius: BorderRadius.circular(25),
                                         border: Border.all(
-                                          color: Colors.teal.shade600,
+                                          color: Colors.teal.shade400,
                                           width: 1.5,
                                         ),
                                         boxShadow: [
@@ -2287,7 +2309,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
       String questId, int answerIndex, StateSetter setDialogState) async {
     try {
       final response = await http.post(
-        Uri.parse('${ServerConfig.serverUrl}/quests/quiz/answer'),
+        Uri.parse('$serverUrl/quests/quiz/answer'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'user_id': _userId,
@@ -2396,7 +2418,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   Future<void> _claimReward(String questId, StateSetter setDialogState) async {
     try {
       final response = await http.post(
-        Uri.parse('${ServerConfig.serverUrl}/quests/reward'),
+        Uri.parse('$serverUrl/quests/reward'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'user_id': _userId, 'quest_id': questId}),
       );
@@ -2530,7 +2552,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
       String placeName, String reviewText, File imageFile) async {
     try {
       var request =
-          http.MultipartRequest('POST', Uri.parse('${ServerConfig.serverUrl}/reviews/'))
+          http.MultipartRequest('POST', Uri.parse('$serverUrl/reviews/'))
             ..fields['user_id'] = _userId
             ..fields['place_name'] = placeName
             ..fields['review_text'] = reviewText
@@ -2575,7 +2597,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
   Future<List<Review>> _fetchMyReviews() async {
     try {
-              final response = await http.get(Uri.parse('${ServerConfig.serverUrl}/reviews/$_userId'));
+      final response = await http.get(Uri.parse('$serverUrl/reviews/$_userId'));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         final List<dynamic> reviewList = data['reviews'];
@@ -2709,7 +2731,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   Future<void> _notifyServerOfShare(Review review) async {
     try {
       final response = await http.post(
-        Uri.parse('${ServerConfig.serverUrl}/shares/record'),
+        Uri.parse('$serverUrl/shares/record'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'user_id': _userId,
@@ -3254,6 +3276,8 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                             width: 48,
                             height: 48,
                             color: Colors.grey[200],
+                            // --- [수정] 프로필 이미지 표시 로직 ---
+                            // Kakao 유저일 때만 프로필 이미지를 사용하고, 게스트/어드민은 기본 아이콘 표시
                             child: _currentUser?.kakaoAccount?.profile
                                         ?.thumbnailImageUrl !=
                                     null
@@ -3269,11 +3293,10 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                           ),
                         ),
                         const SizedBox(width: 8),
+                        // --- [수정] 사용자 이름 표시 로직 ---
+                        // 모든 로그인 타입에서 _username을 사용하도록 통일
                         Text(
-                          _isGuest
-                              ? 'Guest'
-                              : _currentUser?.kakaoAccount?.profile?.nickname ??
-                                  'User',
+                          _username,
                           style: const TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 16),
                         ),
@@ -3291,39 +3314,41 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12.0, vertical: 4.0),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.9),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withOpacity(0.1), blurRadius: 4)
-                      ],
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _selectedTestPlace,
-                        hint: const Text("테스트 위치 선택"),
-                        isDense: true,
-                        onChanged: (String? newValue) {
-                          if (newValue != null) {
-                            setState(() => _selectedTestPlace = newValue);
-                            _setTestLocationTo(newValue);
-                          }
-                        },
-                        items: targetKeywords
-                            .map<DropdownMenuItem<String>>((String value) {
-                          return DropdownMenuItem<String>(
-                            value: value,
-                            child: Text(value,
-                                style: const TextStyle(fontSize: 13)),
-                          );
-                        }).toList(),
+                  if (_isAdmin)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12.0, vertical: 4.0),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4)
+                        ],
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedTestPlace,
+                          hint: const Text("테스트 위치 선택"),
+                          isDense: true,
+                          onChanged: (String? newValue) {
+                            if (newValue != null) {
+                              setState(() => _selectedTestPlace = newValue);
+                              _setTestLocationTo(newValue);
+                            }
+                          },
+                          items: targetKeywords
+                              .map<DropdownMenuItem<String>>((String value) {
+                            return DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(value,
+                                  style: const TextStyle(fontSize: 13)),
+                            );
+                          }).toList(),
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),

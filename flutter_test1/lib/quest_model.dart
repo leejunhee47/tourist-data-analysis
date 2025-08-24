@@ -36,29 +36,25 @@ class Quest {
 
   factory Quest.fromJson(Map<String, dynamic> json) {
     return Quest(
-      questId: json['quest_id'] ?? json['questId'] ?? '',
-      title: json['title'] ?? '',
-      description: json['description'] ?? '',
-      type: json['type'] ?? '',
-      status: json['status'] ?? 'active',
-      points: json['points'] ?? 0,
-      completedPlaces: List<String>.from(json['completed_places'] ?? json['completedPlaces'] ?? []),
-      requiredVisits: json['required_visits'] ?? json['requiredVisits'] ?? 0,
-      currentVisitCount: json['current_visit_count'] ?? json['currentVisitCount'] as int? ?? 0,
-      isCompleted: json['is_completed'] ?? json['isCompleted'] as bool?,
-      themeName: json['theme_name'] ?? json['themeName'],
+      questId: json['quest_id'],
+      title: json['title'],
+      description: json['description'],
+      type: json['type'],
+      status: json['status'],
+      points: json['points'],
+      completedPlaces: List<String>.from(json['completed_places'] ?? []),
+      requiredVisits: json['required_visits'] ?? 0,
+      currentVisitCount: json['current_visit_count'] as int? ?? 0,
+      isCompleted: json['is_completed'] as bool?,
+      themeName: json['theme_name'],
       targetPlaces: json['target_places'] != null
           ? List<String>.from(json['target_places'])
-          : json['targetPlaces'] != null
-              ? List<String>.from(json['targetPlaces'])
-              : null,
-      quizQuestion: json['quiz_question'] ?? json['quizQuestion'],
+          : null,
+      quizQuestion: json['quiz_question'],
       quizOptions: json['quiz_options'] != null
           ? List<String>.from(json['quiz_options'])
-          : json['quizOptions'] != null
-              ? List<String>.from(json['quizOptions'])
-              : null,
-      isAnswered: json['is_answered'] ?? json['isAnswered'],
+          : null,
+      isAnswered: json['is_answered'],
     );
   }
 }

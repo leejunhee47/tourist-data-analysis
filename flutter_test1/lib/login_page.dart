@@ -1,10 +1,13 @@
 // lib/login_page.dart
 
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // 사용자 취소 예외 처리를 위해 임포트
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'loading_page.dart';
+import 'config.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -16,6 +19,11 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   String? _errorMessage;
+
+  final TextEditingController _adminUsernameController =
+      TextEditingController();
+  final TextEditingController _adminPasswordController =
+      TextEditingController();
 
   Future<bool> _checkConnectivity() async {
     try {
@@ -45,25 +53,20 @@ class _LoginPageState extends State<LoginPage> {
     }
 
     try {
-      // 카카오톡이 설치되어 있는지 확인
       if (await isKakaoTalkInstalled()) {
         try {
-          // 카카오톡 로그인 시도
           await UserApi.instance.loginWithKakaoTalk();
         } catch (error) {
-          // 카카오톡 로그인 실패 시 (계정 연결 안됨 등) 카카오계정 로그인으로 fallback
           if (error is PlatformException &&
               (error.code == 'NotSupportError' ||
                   error.code == 'INVALID_REQUEST')) {
             print('카카오톡 로그인 실패, 카카오계정 로그인으로 전환: ${error.message}');
             await UserApi.instance.loginWithKakaoAccount();
           } else {
-            // 다른 에러는 그대로 throw
             rethrow;
           }
         }
       } else {
-        // 카카오톡이 설치되지 않은 경우 카카오계정 로그인
         await UserApi.instance.loginWithKakaoAccount();
       }
 
@@ -79,7 +82,6 @@ class _LoginPageState extends State<LoginPage> {
       print('StackTrace: $stackTrace');
 
       if (error is PlatformException && error.code == 'CANCELED') {
-        // 사용자가 취소한 경우
         if (mounted) {
           setState(() {
             _isLoading = false;
@@ -125,6 +127,107 @@ class _LoginPageState extends State<LoginPage> {
         MaterialPageRoute(builder: (context) => const LoadingPage.guest()),
       );
     }
+  }
+
+  void _showAdminLoginDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        bool isAdminLoading = false;
+        String? adminError;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('어드민 로그인'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: _adminUsernameController,
+                    decoration: const InputDecoration(labelText: 'Username'),
+                  ),
+                  TextField(
+                    controller: _adminPasswordController,
+                    decoration: const InputDecoration(labelText: 'Password'),
+                    obscureText: true,
+                  ),
+                  if (adminError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(adminError!,
+                          style: const TextStyle(color: Colors.red)),
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('취소'),
+                ),
+                ElevatedButton(
+                  onPressed: isAdminLoading
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            isAdminLoading = true;
+                            adminError = null;
+                          });
+
+                          try {
+                            final response = await http.post(
+                              Uri.parse('$serverUrl/admin_login/'),
+                              headers: {'Content-Type': 'application/json'},
+                              body: json.encode({
+                                'username': _adminUsernameController.text,
+                                'password': _adminPasswordController.text,
+                              }),
+                            );
+
+                            if (response.statusCode == 200) {
+                              final data =
+                                  json.decode(utf8.decode(response.bodyBytes));
+                              if (mounted) {
+                                Navigator.of(context).pop();
+                                Navigator.of(context).pushReplacement(
+                                  MaterialPageRoute(
+                                    builder: (context) => LoadingPage.admin(
+                                      adminUserId: data['user_id'],
+                                      adminUsername: data['username'],
+                                    ),
+                                  ),
+                                );
+                              }
+                            } else {
+                              final errorData =
+                                  json.decode(utf8.decode(response.bodyBytes));
+                              setDialogState(() {
+                                adminError = errorData['detail'] ?? '로그인 실패';
+                              });
+                            }
+                          } catch (e) {
+                            setDialogState(() {
+                              adminError = '오류가 발생했습니다.';
+                            });
+                          } finally {
+                            setDialogState(() {
+                              isAdminLoading = false;
+                            });
+                          }
+                        },
+                  child: isAdminLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('로그인'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _buildErrorOverlay() {
@@ -201,6 +304,7 @@ class _LoginPageState extends State<LoginPage> {
               children: [
                 const Icon(Icons.travel_explore, size: 80, color: Colors.white),
                 const SizedBox(height: 24),
+                // --- [수정] GestureDetector 제거 ---
                 const Text(
                   '나만의 여행 일지를 만들어보세요!',
                   style: TextStyle(
@@ -250,6 +354,23 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   child: const Text('게스트로 시작하기'),
+                ),
+                // --- [수정] 어드민 로그인 버튼 추가 ---
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: _showAdminLoginDialog,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 10,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                      side: const BorderSide(color: Colors.white70),
+                    ),
+                  ),
+                  child: const Text('어드민으로 로그인'),
                 ),
               ],
             ),
