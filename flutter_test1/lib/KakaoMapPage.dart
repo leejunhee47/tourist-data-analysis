@@ -1,6 +1,5 @@
 // lib/KakaoMapPage.dart
 
-// ... (imports remain the same)
 import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:convert';
@@ -76,7 +75,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     '낙산공원',
     '은평한옥마을',
     '동대문디자인플라자',
-    '창덕궁',
     '올림픽공원_들꽃마루',
     '창경궁',
     '덕수궁',
@@ -96,7 +94,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     WidgetsBinding.instance.addObserver(this);
   }
 
-  // --- [수정] _initializeStateFromGameData: username 초기화 추가 ---
   void _initializeStateFromGameData() {
     final gameData = widget.gameData;
     _userId = gameData.userId;
@@ -116,60 +113,29 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     _questProgress = gameData.questProgress;
   }
 
-  // ... (dispose, didChangeAppLifecycleState, and other methods remain the same)
-  // No other changes are needed in the functions below for this specific request.
-  // The rest of the file remains the same until the build method.
-
   @override
   void dispose() {
     if (_sessionId != null) {
       _endGameSession();
     }
-    // 🔥 앱 생명주기 감지기 해제
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  // 🔥 앱 상태 변경 감지 메서드
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
-    // async 키워드 추가
     super.didChangeAppLifecycleState(state);
-    // 앱이 다시 활성화되었고, 이전에 공유가 시작되었다면
     if (state == AppLifecycleState.resumed && _isSharingInProgress) {
-      // 공유 상태를 즉시 초기화하여 중복 실행 방지
       final reviewToProcess = _reviewBeingShared;
       setState(() {
         _isSharingInProgress = false;
         _reviewBeingShared = null;
       });
 
-      // 공유하려던 리뷰가 있는지 확인
       if (reviewToProcess != null) {
         print("공유 흐름을 마치고 앱으로 복귀했습니다. 서버에 알림을 전송하고 데이터를 갱신합니다.");
-
-        // 서버에 공유 완료 사실을 알리고 응답을 기다림
         await _notifyServerOfShare(reviewToProcess);
-
-        // 최신 퀘스트 목록과 진행 상황을 서버에서 다시 불러옴
         await _fetchQuestsAndProgress();
-
-        // 사용자에게 퀘스트 완료 피드백 제공 (UI 스레드에서 실행 보장)
-        if (mounted) {
-          // 공유 퀘스트가 '보상 받기' 상태로 변경되었는지 확인
-          final isShareQuestReady = _quests.any(
-              (q) => q.type == 'share_image' && q.status == 'reward_ready');
-
-          // if (isShareQuestReady) {
-          //   ScaffoldMessenger.of(context).showSnackBar(
-          //     const SnackBar(
-          //       content: Text('🎉 공유 퀘스트 완료! 보상을 확인하세요.'),
-          //       backgroundColor: Colors.teal,
-          //       behavior: SnackBarBehavior.floating,
-          //     ),
-          //   );
-          // }
-        }
       }
     }
   }
@@ -323,7 +289,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
   }
 
-  // [추가] 백엔드에서 로컬 이미지 URL 맵을 가져오는 함수
   Future<void> _fetchLocalImageUrls() async {
     try {
       final response =
@@ -343,23 +308,17 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
   Future<void> _displayTouristPhotos() async {
     if (_touristSpotPhotos.isEmpty || !isMapLoaded) return;
-    // 서버 주소 (URL 조합을 위해)
     const String serverBaseUrl = serverUrl;
     for (final photo in _touristSpotPhotos) {
       String? matchedPlace;
       for (final placeName in _placeCoords.keys) {
-        // --- [수정 시작] 롯데월드타워 매칭 로직 보강 ---
         bool isMatch = false;
 
-        // 1. 기존 매칭 로직 (대부분의 경우)
         if (photo.galTitle.contains(placeName) ||
             photo.galSearchKeyword.contains(placeName) ||
             photo.galPhotographyLocation.contains(placeName)) {
           isMatch = true;
-        }
-        // 2. 롯데타워/롯데월드타워 예외 처리 (양방향 매칭)
-        // 사진 제목이나 좌표 키 중 하나라도 '롯데타워' 관련 단어이면 서로 매칭되도록 처리
-        else if ((photo.galTitle.contains('롯데타워') ||
+        } else if ((photo.galTitle.contains('롯데타워') ||
                 photo.galTitle.contains('롯데월드타워')) &&
             (placeName == '롯데타워' || placeName == '롯데월드타워')) {
           isMatch = true;
@@ -369,7 +328,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
           matchedPlace = placeName;
           break;
         }
-        // --- [수정 종료] ---
       }
 
       if (matchedPlace != null) {
@@ -380,23 +338,17 @@ class _KakaoMapPageState extends State<KakaoMapPage>
               (v['is_correct'] == true || v['is_correct'] == 1),
         );
 
-        // [수정] 좌표 키와 관계없이 앱 내 표준 키워드(targetKeywords) 기준으로 제목 통일
         String canonicalPlaceName = matchedPlace;
         if (targetKeywords.contains('롯데타워') && (matchedPlace == '롯데월드타워')) {
           canonicalPlaceName = '롯데타워';
         }
 
-        // 1. 서버에서 가져온 로컬 이미지 목록(_localImageUrls)에 해당 관광지 이름이 있는지 확인합니다.
         final String? localImagePath = _localImageUrls[canonicalPlaceName];
-
-        // 2. localImagePath가 null이 아니면(로컬 이미지가 있으면) 해당 경로를 사용하고,
-        //    null이면(로컬 이미지가 없으면) 관광사진 API의 이미지(photo.galWebImageUrl)를 사용합니다.
         final String imageUrl = photo.base64Thumbnail ??
             (localImagePath != null
                 ? '$serverBaseUrl$localImagePath'
                 : photo.galWebImageUrl);
-
-        final String title = canonicalPlaceName; // 표준 키워드로 제목 설정
+        final String title = canonicalPlaceName;
 
         final jsCode =
             "addPhotoMarker(${coords['lat']}, ${coords['lng']}, '$imageUrl', '${title.replaceAll("'", "\\'")}', '${photo.galContentId}', $isVisited);";
@@ -606,6 +558,229 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
   }
 
+  Future<void> _submitPredictionWithTestImage(
+      String targetPlace, String imageFilename) async {
+    await _clearMissionHighlight();
+    if (currentPosition == null) {
+      _showPredictionResultOverlay(
+        isCorrect: false,
+        message: '현재 위치를 알 수 없습니다. 위치 서비스를 확인해주세요.',
+        scoreEarned: 0,
+      );
+      return;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('$serverUrl/predict_with_test_image/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'session_id': _sessionId!,
+          'target_place': targetPlace,
+          'latitude': currentPosition!.latitude,
+          'longitude': currentPosition!.longitude,
+          'image_filename': imageFilename,
+        }),
+      );
+
+      final responseData = json.decode(utf8.decode(response.bodyBytes));
+      if (response.statusCode == 200) {
+        final bool isCorrect = responseData['is_correct'];
+        final String message = responseData['message'];
+        final int scoreEarned = responseData['score_earned'] ?? 0;
+
+        if (isCorrect) {
+          final photoItem = _touristSpotPhotos.firstWhere(
+            (p) => p.galTitle.contains(targetPlace),
+            orElse: () => PhotoItem.empty(),
+          );
+          if (photoItem.galContentId.isNotEmpty) {
+            try {
+              await _controller.runJavaScript(
+                "updateMarkerToVisited('${photoItem.galContentId}')",
+              );
+            } catch (e) {
+              print("JS updateMarkerToVisited 호출 오류: $e");
+            }
+          }
+        }
+
+        if (mounted) {
+          _showPredictionResultOverlay(
+            isCorrect: isCorrect,
+            message: message,
+            scoreEarned: scoreEarned,
+          );
+          _fetchUserProfile();
+          _fetchRankings();
+          _fetchQuestsAndProgress();
+        }
+      } else {
+        throw Exception(responseData['detail'] ?? '서버에서 오류가 발생했습니다.');
+      }
+    } on SocketException {
+      if (mounted) {
+        _showPredictionResultOverlay(
+          isCorrect: false,
+          message: '네트워크 연결을 확인해주세요.',
+          scoreEarned: 0,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        _showPredictionResultOverlay(
+          isCorrect: false,
+          message: '오류가 발생했습니다: $e',
+          scoreEarned: 0,
+        );
+      }
+    }
+  }
+
+  Future<void> _showTestImageSelectionDialog(String placeName) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // --- [수정] API 요청 경로 변경 ---
+      final encodedPlaceName = Uri.encodeComponent(placeName);
+      final response = await http
+          .get(Uri.parse('$serverUrl/api/test_images/$encodedPlaceName'));
+
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        final List<String> imageUrls = List<String>.from(data['image_urls']);
+
+        if (!mounted) return;
+
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text('\'$placeName\' 테스트 이미지 선택'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                ),
+                itemCount: imageUrls.length,
+                itemBuilder: (context, index) {
+                  final imageUrl = imageUrls[index];
+                  final fullUrl = '$serverUrl$imageUrl';
+                  final filename = imageUrl.split('/').last;
+
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _submitPredictionWithTestImage(placeName, filename);
+                    },
+                    child: GridTile(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8.0),
+                        child: Image.network(
+                          fullUrl,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          },
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Icon(Icons.error, color: Colors.red),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _clearMissionHighlight();
+                },
+                child: const Text('취소'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        final errorData = json.decode(utf8.decode(response.bodyBytes));
+        throw Exception(errorData['detail'] ?? '이미지를 불러오는 데 실패했습니다.');
+      }
+    } catch (e) {
+      if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('오류: $e')),
+        );
+        await _clearMissionHighlight();
+      }
+    }
+  }
+
+  Future<void> _pickImage() async {
+    showModalBottomSheet(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('카메라로 촬영'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _getImage(ImageSource.camera);
+              },
+            ),
+            if (_isAdmin)
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('앨범에서 선택'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _getImage(ImageSource.gallery);
+                },
+              ),
+            if (_isAdmin)
+              ListTile(
+                leading: const Icon(Icons.image_search),
+                title: const Text('테스트 이미지로 인증'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showTestImageSelectionDialog(_currentTargetPlace!);
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('취소'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _clearMissionHighlight();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showAutoDismissingOverlay({
     required Widget child,
     required Duration duration,
@@ -681,46 +856,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     } finally {
       if (mounted) setState(() => isLocationLoading = false);
     }
-  }
-
-  Future<void> _pickImage() async {
-    showModalBottomSheet(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('카메라로 촬영'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _getImage(ImageSource.camera);
-              },
-            ),
-            if (_isAdmin)
-              ListTile(
-                leading: const Icon(Icons.photo_library),
-                title: const Text('앨범에서 선택'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _getImage(ImageSource.gallery);
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.close),
-              title: const Text('취소'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _clearMissionHighlight();
-              },
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   void _showPredictionResultOverlay({
@@ -964,7 +1099,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     });
   }
 
-  // [신규] 이미지를 전체 화면 갤러리로 보여주는 함수 (페이지 네비게이션 추가)
   void _showImageGalleryDialog(List<PhotoItem> photos, String originalTitle) {
     final PageController pageController = PageController();
     showDialog(
@@ -1019,17 +1153,14 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                   },
                 ),
               ),
-              // 페이지 네비게이션을 actions 위에 추가
               actionsPadding: EdgeInsets.zero,
               actions: [
-                // 페이지 네비게이션 버튼들
                 Container(
                   width: double.infinity,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Column(
                     children: [
-                      // 페이지 카운터 표시
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
@@ -1041,7 +1172,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                           ),
                         ),
                       ),
-                      // 페이지 네비게이션
                       SizedBox(
                         height: 40,
                         child: photos.length <= 10
@@ -1051,7 +1181,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                 currentPage, pageController, setState),
                       ),
                       const SizedBox(height: 8),
-                      // 닫기 버튼
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -1074,7 +1203,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     );
   }
 
-  // 10개 이하의 페이지를 위한 단순한 네비게이션
   Widget _buildSimplePageNavigation(int totalPages, int currentPage,
       PageController pageController, StateSetter setState) {
     return SizedBox(
@@ -1086,7 +1214,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // 이전 버튼
               IconButton(
                 onPressed: currentPage > 0
                     ? () {
@@ -1104,7 +1231,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                 icon: const Icon(Icons.chevron_left),
                 iconSize: 20,
               ),
-              // 페이지 번호들
               ...List.generate(totalPages, (index) {
                 final isSelected = index == currentPage;
                 return GestureDetector(
@@ -1138,7 +1264,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                   ),
                 );
               }),
-              // 다음 버튼
               IconButton(
                 onPressed: currentPage < totalPages - 1
                     ? () {
@@ -1163,14 +1288,12 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     );
   }
 
-  // 10개 초과의 페이지를 위한 스크롤 가능한 네비게이션
   Widget _buildScrollablePageNavigation(int totalPages, int currentPage,
       PageController pageController, StateSetter setState) {
     return SizedBox(
       width: double.infinity,
       child: Row(
         children: [
-          // 이전 버튼
           SizedBox(
             width: 40,
             child: IconButton(
@@ -1192,7 +1315,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
               padding: EdgeInsets.zero,
             ),
           ),
-          // 스크롤 가능한 페이지 번호들
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -1202,7 +1324,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
               ),
             ),
           ),
-          // 다음 버튼
           SizedBox(
             width: 40,
             child: IconButton(
@@ -1229,19 +1350,15 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     );
   }
 
-// 페이지 번호 위젯들을 생성하는 헬퍼 함수
   List<Widget> _buildPageNumbers(int totalPages, int currentPage,
       PageController pageController, StateSetter setState) {
     List<Widget> pageNumbers = [];
-    // 현재 페이지 주변의 페이지들만 표시하는 로직
     int start = 0;
     int end = totalPages - 1;
-    // 페이지가 많을 경우 현재 페이지 주변만 표시
     if (totalPages > 8) {
       start = (currentPage - 3).clamp(0, totalPages - 7);
       end = (start + 6).clamp(6, totalPages - 1);
 
-      // 첫 페이지와 ... 표시
       if (start > 0) {
         pageNumbers
             .add(_buildPageButton(0, currentPage, pageController, setState));
@@ -1254,13 +1371,11 @@ class _KakaoMapPageState extends State<KakaoMapPage>
       }
     }
 
-    // 메인 페이지 번호들
     for (int i = start; i <= end; i++) {
       pageNumbers
           .add(_buildPageButton(i, currentPage, pageController, setState));
     }
 
-    // 마지막 페이지와 ... 표시
     if (totalPages > 7 && end < totalPages - 1) {
       if (end < totalPages - 2) {
         pageNumbers.add(const Padding(
@@ -1275,7 +1390,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     return pageNumbers;
   }
 
-// 개별 페이지 버튼을 생성하는 헬퍼 함수
   Widget _buildPageButton(int pageIndex, int currentPage,
       PageController pageController, StateSetter setState) {
     final isSelected = pageIndex == currentPage;
@@ -1547,7 +1661,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     );
   }
 
-  // [추가] 장소별 리뷰 목록을 가져오는 함수
   Future<List<Review>> _fetchPlaceReviews(String placeName) async {
     try {
       final encodedPlaceName = Uri.encodeComponent(placeName);
@@ -1566,7 +1679,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
   }
 
-  // [추가] 날짜 포맷팅을 위한 헬퍼 함수
   String _formatReviewDate(String isoString) {
     try {
       final dateTime = DateTime.parse(isoString);
@@ -1576,7 +1688,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
   }
 
-  // [추가] 특정 장소에 대한 나의 리뷰만 가져오는 함수
   Future<List<Review>> _fetchMyPlaceReviews(String placeName) async {
     try {
       final encodedPlaceName = Uri.encodeComponent(placeName);
@@ -1595,7 +1706,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
   }
 
-  // [추가] 특정 장소에 대한 나의 리뷰를 보여주는 다이얼로그
   void _showMyPlaceReviewsDialog(String placeName) {
     showDialog(
       context: context,
@@ -1719,7 +1829,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   }
 
   void _showPhotoDetail(PhotoItem photo) {
-    // 더 강력해진 관광지 매칭 로직
     String matchedPlace = '';
 
     for (String keyword in targetKeywords) {
@@ -1773,14 +1882,12 @@ class _KakaoMapPageState extends State<KakaoMapPage>
       }
     });
 
-    // --- ▼▼▼ [수정] 이미지 URL 결정 로직을 _displayTouristPhotos와 동일하게 변경 ▼▼▼ ---
     final String? localImagePath =
         matchedPlace.isNotEmpty ? _localImageUrls[matchedPlace] : null;
     final String finalImageUrl = photo.base64Thumbnail ??
         (localImagePath != null
             ? '$serverUrl$localImagePath'
             : photo.galWebImageUrl);
-    // --- ▲▲▲ 수정 완료 ▲▲▲ ---
 
     final String finalTitle =
         matchedPlace.isNotEmpty ? matchedPlace : photo.galTitle;
@@ -1817,9 +1924,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                       constraints: BoxConstraints(
                         maxHeight: MediaQuery.of(context).size.height * 0.4,
                       ),
-                      // [중요] 상세 정보 창에서는 Base64 이미지를 직접 표시할 수 없으므로,
-                      // 썸네일이 아닌 원본 이미지 URL(galWebImageUrl)을 사용하도록 유지합니다.
-                      // 단, 로컬 이미지가 있는 경우는 그것을 우선합니다.
                       child: Image.network(
                         localImagePath != null
                             ? '$serverUrl$localImagePath'
@@ -1853,11 +1957,9 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                   icon: Icon(isVisitedToday
                                       ? Icons.check_circle_outline
                                       : Icons.flag_outlined),
-                                  // [수정] 관리자일 경우 '오늘 인증 완료' 대신 '미션 시작' 텍스트가 보이도록 변경
                                   label: Text((isVisitedToday && !_isAdmin)
                                       ? '오늘 인증 완료'
                                       : '이 장소로 미션 시작'),
-                                  // [수정] 관리자일 경우 isVisitedToday가 true여도 버튼이 활성화되도록 변경
                                   onPressed: (isVisitedToday && !_isAdmin)
                                       ? null
                                       : () {
@@ -2152,17 +2254,15 @@ class _KakaoMapPageState extends State<KakaoMapPage>
   Widget _buildActiveQuestCard(Quest quest, StateSetter setDialogState) {
     IconData questIcon;
 
-    // 1. 퀘스트 제목(title)으로 특정 테마 미션을 먼저 확인합니다.
     if (quest.title == '조선왕조의 발자취') {
-      questIcon = Icons.temple_buddhist_outlined; // 궁궐 모양 아이콘
+      questIcon = Icons.temple_buddhist_outlined;
     } else if (quest.title == '도심 속 자연 탐방') {
-      questIcon = Icons.forest_outlined; // 공원/숲 아이콘
+      questIcon = Icons.forest_outlined;
     } else if (quest.title == '전통 문화 체험') {
-      questIcon = Icons.rice_bowl_outlined; // 박물관/문화 아이콘
+      questIcon = Icons.rice_bowl_outlined;
     } else if (quest.title == '이미지 공유하기') {
       questIcon = Icons.share_outlined;
     } else {
-      // 2. 그 외의 퀘스트는 기존처럼 타입(type)으로 아이콘을 결정합니다.
       questIcon = _getIconForQuestType(quest.type);
     }
 
@@ -2240,10 +2340,9 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12.0)), // 모양은 원래대로 통일
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
       child: ListTile(
-        leading: Icon(questIcon, color: Colors.blue.shade700), // 결정된 아이콘 사용
+        leading: Icon(questIcon, color: Colors.blue.shade700),
         title: Text(
           quest.title,
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
@@ -2611,7 +2710,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     return [];
   }
 
-  // [추가] 장소별 리뷰 목록을 보여주는 다이얼로그 함수
   void _showPlaceReviewsDialog(String placeName) {
     showDialog(
       context: context,
@@ -2729,7 +2827,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     );
   }
 
-  // 🔥 서버에 공유 완료를 알리는 함수
   Future<void> _notifyServerOfShare(Review review) async {
     try {
       final response = await http.post(
@@ -2751,9 +2848,7 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
   }
 
-  // ▼▼▼ [수정] 카카오톡 공유 기능 (앱 복귀 감지 로직 적용) ▼▼▼
   Future<void> _shareReviewViaKakao(Review review) async {
-    // 공유할 이미지가 없는 경우 사용자에게 알림
     if (review.imageUrl == null || review.imageUrl!.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2764,18 +2859,15 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
 
     try {
-      // 1. 카카오 서버에 이미지를 업로드하고 URL을 받습니다.
       final imageUploadResult =
           await ShareClient.instance.scrapImage(imageUrl: review.imageUrl!);
       final kakaoImageUrl = imageUploadResult.infos.original.url;
 
-      // 2. [사진 보기 기능] 이미지와 하단 탭을 위한 링크
       final imageLink = Link(
         webUrl: Uri.parse(review.imageUrl!),
         mobileWebUrl: Uri.parse(review.imageUrl!),
       );
 
-      // 3. [자세히 보기 기능] '자세히 보기' 버튼을 위한 구글 검색 링크 생성
       final encodedPlaceName = Uri.encodeComponent(review.placeName);
       final googleSearchUrl =
           'https://www.google.com/search?q=$encodedPlaceName';
@@ -2784,25 +2876,21 @@ class _KakaoMapPageState extends State<KakaoMapPage>
         mobileWebUrl: Uri.parse(googleSearchUrl),
       );
 
-      // 4. 요구사항에 맞게 최종 템플릿을 구성합니다.
       final FeedTemplate template = FeedTemplate(
         content: Content(
           title: '나만의 서울 여행',
           description: '장소: ${review.placeName}',
           imageUrl: Uri.parse(kakaoImageUrl),
-          // 사진과 하단 탭은 이미지 링크를 따라갑니다.
           link: imageLink,
         ),
         buttons: [
           Button(
             title: '관광지 자세히 보기',
-            // '자세히 보기' 버튼은 구글 검색 링크로 설정합니다.
             link: googleSearchLink,
           )
         ],
       );
 
-      // 5. 카카오톡으로 공유 실행 (이하 로직은 동일)
       bool isKakaoTalkSharingAvailable =
           await ShareClient.instance.isKakaoTalkSharingAvailable();
       if (isKakaoTalkSharingAvailable) {
@@ -2831,7 +2919,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     }
   }
 
-  // ▼▼▼ [수정] 나의 리뷰 상세 보기 다이얼로그 함수 (공유 버튼 추가) ▼▼▼
   void _showMyReviewDetailDialog(Review review) {
     showDialog(
       context: context,
@@ -2906,13 +2993,11 @@ class _KakaoMapPageState extends State<KakaoMapPage>
             ),
           ),
           actions: [
-            // [수정] 이미지 여부와 상관없이 항상 공유 버튼 표시
             TextButton.icon(
               onPressed: () => _shareReviewViaKakao(review),
               icon: const Icon(Icons.share),
               label: const Text('카카오톡 공유하기'),
             ),
-            // '닫기' 버튼
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('닫기'),
@@ -2923,7 +3008,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
     );
   }
 
-  // ▼▼▼ [수정] 나의 리뷰 목록 UI 변경 및 클릭 이벤트 추가 ▼▼▼
   void _showMyReviewsDialog() {
     showDialog(
       context: context,
@@ -2931,21 +3015,17 @@ class _KakaoMapPageState extends State<KakaoMapPage>
         return AlertDialog(
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          // title을 content 안으로 이동시켜 디자인 통일성 확보
           titlePadding: EdgeInsets.zero,
           contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
           content: SizedBox(
             width: double.maxFinite,
-            // Column으로 감싸서 프로필 헤더와 리뷰 목록을 수직으로 배치
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // --- 사용자 프로필 헤더 ---
                 Padding(
                   padding: const EdgeInsets.only(bottom: 16.0),
                   child: Row(
                     children: [
-                      // 카카오 프로필 이미지 또는 기본 아이콘
                       CircleAvatar(
                         radius: 22,
                         backgroundColor: Colors.grey[200],
@@ -2962,7 +3042,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                             : null,
                       ),
                       const SizedBox(width: 12),
-                      // 닉네임
                       Expanded(
                         child: Text(
                           _isGuest
@@ -2976,7 +3055,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                         ),
                       ),
                       const SizedBox(width: 8),
-                      // '나의 리뷰' 텍스트
                       const Text(
                         "나의 리뷰",
                         style: TextStyle(fontSize: 16, color: Colors.black54),
@@ -2984,7 +3062,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                     ],
                   ),
                 ),
-                // --- 리뷰 목록 ---
                 Flexible(
                   child: FutureBuilder<List<Review>>(
                     future: _fetchMyReviews(),
@@ -3001,13 +3078,12 @@ class _KakaoMapPageState extends State<KakaoMapPage>
 
                       final reviews = snapshot.data!;
                       return ListView.builder(
-                        shrinkWrap: true, // 내용만큼만 높이를 차지하도록 설정
+                        shrinkWrap: true,
                         itemCount: reviews.length,
                         itemBuilder: (context, index) {
                           final review = reviews[index];
                           final reviewImageUrl = review.imageUrl;
 
-                          // Card를 InkWell로 감싸 클릭 이벤트를 추가
                           return InkWell(
                             onTap: () {
                               _showMyReviewDetailDialog(review);
@@ -3021,7 +3097,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  // 리뷰 이미지가 있을 경우 표시
                                   if (reviewImageUrl != null &&
                                       reviewImageUrl.isNotEmpty)
                                     Image.network(
@@ -3050,7 +3125,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                         );
                                       },
                                     ),
-                                  // 장소 이름과 리뷰 텍스트 (줄바꿈 처리 포함)
                                   ListTile(
                                     title: Text(review.placeName,
                                         style: const TextStyle(
@@ -3059,13 +3133,11 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                                       padding: const EdgeInsets.only(top: 4.0),
                                       child: Text(
                                         review.reviewText,
-                                        maxLines: 2, // 2줄까지만 표시
-                                        overflow: TextOverflow
-                                            .ellipsis, // 넘어가면 ... 처리
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                   ),
-                                  // 리뷰 작성일
                                   Padding(
                                     padding:
                                         const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -3289,8 +3361,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                             width: 48,
                             height: 48,
                             color: Colors.grey[200],
-                            // --- [수정] 프로필 이미지 표시 로직 ---
-                            // Kakao 유저일 때만 프로필 이미지를 사용하고, 게스트/어드민은 기본 아이콘 표시
                             child: _currentUser?.kakaoAccount?.profile
                                         ?.thumbnailImageUrl !=
                                     null
@@ -3306,8 +3376,6 @@ class _KakaoMapPageState extends State<KakaoMapPage>
                           ),
                         ),
                         const SizedBox(width: 8),
-                        // --- [수정] 사용자 이름 표시 로직 ---
-                        // 모든 로그인 타입에서 _username을 사용하도록 통일
                         Text(
                           _username,
                           style: const TextStyle(
