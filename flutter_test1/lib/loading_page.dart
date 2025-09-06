@@ -109,7 +109,6 @@ class _LoadingPageState extends State<LoadingPage>
     '올림픽공원_들꽃마루',
     '창경궁',
     '덕수궁',
-    '숭례문',
     '롯데타워',
     '봉은사',
     '서울숲',
